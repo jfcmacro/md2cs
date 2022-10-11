@@ -1,0 +1,2 @@
+#define md2cs_VERSION_MAJOR @md2cs_VERSION_MAJOR@
+#define md2cs_VERSION_MINOR @md2cs_VERSION_MINOR@
