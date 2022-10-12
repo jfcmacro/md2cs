@@ -11,3 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 add_subdirectory(src)
 add_subdirectory(include)
+
+target_include_directories(md2cs PUBLIC
+  "${PROJECT_BINARY_DIR}"
+  "${PROJECT_BINARY_DIR}/include"
+  )

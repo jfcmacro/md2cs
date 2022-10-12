@@ -1,6 +1,6 @@
 #include <iostream>
 #include <cstdlib>
-#include "../include/md2cs_config.h"
+#include "md2cs_config.h"
 
 int
 main(int argc, char *argv[]) {
