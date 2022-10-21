@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
 
-# set the project name
 project(md2cs
   VERSION 0.1
   DESCRIPTION "Transform a markdown script into a Coding Stories"
@@ -9,10 +8,9 @@ project(md2cs
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-add_subdirectory(src)
 add_subdirectory(include)
+add_subdirectory(src)
 
 target_include_directories(md2cs PUBLIC
-  "${PROJECT_BINARY_DIR}"
   "${PROJECT_BINARY_DIR}/include"
   )
