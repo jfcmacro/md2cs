@@ -4,11 +4,12 @@
 #include <cstdlib>
 #include <string>
 #include <regex>
-#include <list>
 #include <filesystem>
 #include <getopt.h>
 #include <git2.h>
 #include "md2cs_config.h"
+
+namespace fs = std::filesystem;
 
 const char* readmeFilename   = "README.md";
 const char* storyFileName    = "story.md";
@@ -18,10 +19,25 @@ const char* repositoriesDir  = "repositories";
 const char* repositoryDir    = "repository";
 const char* defaultBranch    = "main";
 
-void processStoryFile();
+struct Options {
+  bool debug;
+  fs::path targetPath;
+  Options() : debug(false), targetPath() { }
+};
+
+
+void processStoryFile(Options& options);
 inline const char* getOutputFilename(bool);
+void addBuffer2GitRepo(::git_repository* repo,
+                       std::ostringstream* pBuffer,
+                       const char* filename,
+                       Options& options);
+void commitGitRepo(::git_repository* repo,
+                   std::string& message,
+                   Options& options);
 void m_giterror(int error,
-                const char *msg);
+                const char *msg,
+                Options options);
 
 static void version(const char* progname) {
   std::cerr << progname << " version: "
@@ -34,10 +50,15 @@ static void version(const char* progname) {
 
 static void usage(const char* progname,
                   int status) {
-  std::cerr << "usage: " << progname
-            << " ([--version|-v]|"
-            << "[--help|-h]"
-            << " <file.md> "
+  std::cerr << "usage: " << std::endl
+            << progname
+            << "-v | --version"
+            << std::endl;
+  std::cerr << progname
+            << "-h | --help"
+            << std::endl;
+  std::cerr << progname
+            << "[-g]"
             << std::endl;
   ::exit(status);
 }
@@ -48,6 +69,7 @@ main(int argc, char *argv[]) {
   int c;
   int digit_optind = 0;
   const char *progname = argv[0];
+  Options options;
 
   for (;;) {
 
@@ -61,13 +83,17 @@ main(int argc, char *argv[]) {
     };
 
     c = ::getopt_long(argc, argv,
-                      "vh",
+                      "dvh",
                       long_options,
                       &option_index);
     if (c == -1)
       break;
 
     switch (c) {
+    case 'd':
+      options.debug = true;
+      break;
+
     case 'v':
       version(progname);
       break;
@@ -83,20 +109,18 @@ main(int argc, char *argv[]) {
     }
   }
 
-  processStoryFile();
+  processStoryFile(options);
 
   return EXIT_SUCCESS;
 }
 
 void
-processStoryFile() {
+processStoryFile(Options &options) {
 
   std::string currExtRepo;
   std::string currExtBranch { defaultBranch };
   std::string currExtTag;
   std::string message;
-
-  namespace fs = std::filesystem;
 
   fs::path storyDir { fs::current_path() };
 
@@ -112,8 +136,9 @@ processStoryFile() {
     return;
   }
 
-  fs::path targetPath { fs::current_path() };
-  targetPath /= targetDir;
+  options.targetPath /= fs::current_path();
+  options.targetPath /= targetDir;
+
   fs::path targetReposPath { fs::current_path() };
   targetReposPath /= targetDir;
   targetReposPath /= repositoriesDir;
@@ -125,38 +150,16 @@ processStoryFile() {
   readMeRepoPath /= repositoryDir;
 
   m_giterror(::git_libgit2_init(),
-             "Cannot initialize libgit2");
+             "Cannot initialize libgit2",
+             options);
 
-  if (fs::exists(targetPath)) {
-    fs::remove_all(targetPath);
+  if (fs::exists(options.targetPath)) {
+    fs::remove_all(options.targetPath);
   }
 
-  fs::create_directory(targetPath);
+  fs::create_directory(options.targetPath);
   fs::create_directory(targetReposPath);
   fs::create_directory(targetRepoPath);
-
-  ::git_config *config_default;
-
-  m_giterror(::git_config_open_default(&config_default),
-             "Cannot open default configuration");
-
-  ::git_config_entry *entry;
-  m_giterror(::git_config_get_entry(&entry, config_default, "user.name"),
-             "Cannot find user name at default config");
-  std::string userName { entry->value };
-  ::git_config_entry_free(entry);
-
-  m_giterror(::git_config_get_entry(&entry, config_default, "user.email"),
-             "Cannot find user email at default config");
-  std::string userEmail { entry->value };
-  ::git_config_entry_free(entry);
-
-  ::git_signature *signature = nullptr;
-
-  m_giterror(::git_signature_now(&signature,
-                                 userName.c_str(),
-                                 userEmail.c_str()),
-             "Cannot create user signature");
 
   std::string error_msg { "Repo: " };
   error_msg += targetRepoPath;
@@ -164,13 +167,13 @@ processStoryFile() {
   m_giterror(::git_repository_init(&repo,
                                    targetRepoPath.c_str(),
                                    false),
-             error_msg.c_str());
-
-  std::list<git_commit*> commit_parents;
+             error_msg.c_str(),
+             options);
 
   ::git_index *idx = nullptr;
   m_giterror(::git_repository_index(&idx, repo),
-             "Repo Index cannot be obtained");
+             "Repo Index cannot be obtained",
+             options);
 
   std::ifstream input(storyFile);
 
@@ -178,7 +181,7 @@ processStoryFile() {
     std::cerr << "Cannot open: "
               << storyFile
               << std::endl;
-    // fs::remove_all(targetPath);
+    if (!options.debug) fs::remove_all(options.targetPath);
     return;
   }
 
@@ -196,6 +199,7 @@ processStoryFile() {
   enum FILEPROCESS { INCONFIG, OUTCONFIG };
   FILEPROCESS state = OUTCONFIG;
   int pagesProcessed = 0;
+  int commitDone = 0;
   std::ostringstream* pBuffer = new std::ostringstream();
   bool firstPage = true;
 
@@ -212,24 +216,12 @@ processStoryFile() {
           state = INCONFIG;
 
           if (pBuffer->tellp() > 0) {
-            std::ofstream outputFile(getOutputFilename(firstPage),
-                                     std::ios::trunc);
-            outputFile << pBuffer->str() << std::endl;
-            outputFile.close();
+            pagesProcessed++;
+            addBuffer2GitRepo(repo,
+                              pBuffer,
+                              getOutputFilename(firstPage),
+                              options);
             delete pBuffer;
-
-            error_msg.clear();
-            error_msg += "File: ";
-            error_msg += getOutputFilename(firstPage);
-            error_msg += " cannot be added";
-
-            m_giterror(::git_index_add_bypath(idx,
-                                              getOutputFilename(firstPage)),
-                       error_msg.c_str());
-
-            m_giterror(::git_index_write(idx),
-                       "Index cannot be written");
-
             pBuffer = new std::ostringstream();
             if (pBuffer) (*pBuffer) << line << std::endl;
 
@@ -237,44 +229,10 @@ processStoryFile() {
               firstPage = false;
             }
             else {
-              ::git_tree* tree = nullptr;
-              ::git_oid* oid_tree;
-              ::git_index_write_tree(oid_tree, idx);
-              ::git_tree_lookup(&tree, repo, oid_tree);
-
-              const ::git_commit* parents[1];
-              int nParents;
-
-              if (commit_parents.size() == 0) {
-                parents[0] = nullptr;
-                nParents = 0;
-              }
-              else {
-                parents[0] = commit_parents.back();
-                nParents = 1;
-              }
-
-              ::git_oid new_commit_id;
-
-              m_giterror(::git_commit_create(&new_commit_id,
-                                             repo,
-                                             "HEAD",
-                                             signature,
-                                             signature,
-                                             "UTF-8",
-                                             message.c_str(),
-                                             tree,
-                                             1,
-                                             parents),
-                         "Commit cannot be done");
-
-              ::git_commit *previous_commit;
-              m_giterror(::git_commit_lookup(&previous_commit,
-                                             repo,
-                                             &new_commit_id),
-                         "Previous commit not found");
-
-              commit_parents.push_back(previous_commit);
+              commitDone++;
+              commitGitRepo(repo,
+                            message,
+                            options);
             }
           }
         }
@@ -327,69 +285,26 @@ processStoryFile() {
 
   if (pBuffer) (*pBuffer) << line << std::endl;
 
-  std::ofstream outputFile(getOutputFilename(firstPage),
-                           std::ios::trunc);
-  outputFile << pBuffer->str() << std::endl;
-  outputFile.close();
+  pagesProcessed++;
+  addBuffer2GitRepo(repo,
+                    pBuffer,
+                    getOutputFilename(firstPage),
+                    options);
+
   delete pBuffer;
-  pBuffer = new std::ostringstream();
-
-  error_msg.clear();
-  error_msg += "File: ";
-  error_msg += getOutputFilename(firstPage);
-  error_msg += " cannot be added";
-  
-  m_giterror(::git_index_add_bypath(idx,
-                                    getOutputFilename(firstPage)),
-             error_msg.c_str());
-
-  m_giterror(::git_index_write(idx),
-             "Index cannot be written");
-
   if (firstPage) {
     firstPage = false;
   }
   else {
-
-    ::git_tree* tree = nullptr;
-    ::git_oid* oid_tree;
-    ::git_index_write_tree(oid_tree, idx);
-    ::git_tree_lookup(&tree, repo, oid_tree);
-
-    const ::git_commit* parents[1];
-    int nParents;
-
-    if (commit_parents.size() == 0) {
-      parents[0] = nullptr;
-      nParents = 0;
-    }
-    else {
-      parents[0] = commit_parents.back();
-      nParents = 1;
-    }
-
-    ::git_oid new_commit_id;
-
-    m_giterror(::git_commit_create(&new_commit_id,
-                                   repo,
-                                   "HEAD",
-                                   signature,
-                                   signature,
-                                   "UTF-8",
-                                   message.c_str(),
-                                   tree,
-                                   1,
-                                   parents),
-               "Commit cannot be done");
-
-    ::git_commit *previous_commit;
-    ::git_commit_lookup(&previous_commit, repo, &new_commit_id);
-
-    commit_parents.push_back(previous_commit);
+    commitDone++;
+    commitGitRepo(repo,
+                  message,
+                  options);
   }
 
   ::git_libgit2_shutdown();
   std::cout << "Pages processed: " << pagesProcessed << std::endl;
+  std::cout << "Commit done: " << commitDone << std::endl;
 }
 
 inline const char* getOutputFilename(bool isReadme) {
@@ -398,18 +313,151 @@ inline const char* getOutputFilename(bool isReadme) {
 }
 
 void m_giterror(int error,
-                const char *msg) {
+                const char *msg,
+                Options options) {
+
   if (error < GIT_OK) {
       const ::git_error *g_error = ::git_error_last();
       std::cout << msg
                 << " due ("
+                << error
                 << ") "
                 << g_error->klass
                 << " "
                 << g_error->message
                 << std::endl;
-      // fs::remove_all(targetPath);
+      if (!options.debug)
+        fs::remove_all(options.targetPath);
       ::exit(EXIT_FAILURE);
     }
 
+}
+
+void
+addBuffer2GitRepo(::git_repository* repo,
+                  std::ostringstream* pBuffer,
+                  const char* filename,
+                  Options& options) {
+  std::ofstream outputFile(filename,
+                           std::ios::trunc);
+
+  if (!outputFile) {
+    std::cerr << "Could not open: "
+              << filename
+              << std::endl;
+    ::exit(EXIT_FAILURE);
+  }
+
+  outputFile << pBuffer->str() << std::endl;
+  outputFile.close();
+
+  ::git_index *index;
+
+  m_giterror(::git_repository_index(&index,
+                                    repo),
+             "Could not open repository index",
+             options);
+
+  std::string error_msg { "File: " };
+  error_msg += filename;
+  error_msg += " cannot be added";
+
+  m_giterror(::git_index_add_bypath(index,
+                                    filename),
+             error_msg.c_str(),
+             options);
+
+  m_giterror(::git_index_write(index),
+             "Index cannot be written",
+             options);
+
+  ::git_index_free(index);
+}
+
+
+void
+commitGitRepo(::git_repository* repo,
+              std::string& message,
+              Options& options) {
+  ::git_config *config_default;
+
+  m_giterror(::git_config_open_default(&config_default),
+             "Cannot open default configuration",
+             options);
+
+  ::git_config_entry *entry;
+  m_giterror(::git_config_get_entry(&entry,
+                                    config_default,
+                                    "user.name"),
+             "Cannot find user name at default config",
+             options);
+  std::string userName { entry->value };
+  ::git_config_entry_free(entry);
+
+  m_giterror(::git_config_get_entry(&entry,
+                                    config_default,"user.email"),
+             "Cannot find user email at default config",
+             options);
+  std::string userEmail { entry->value };
+  ::git_config_entry_free(entry);
+
+  ::git_signature *signature = nullptr;
+
+  m_giterror(::git_signature_now(&signature,
+                                 userName.c_str(),
+                                 userEmail.c_str()),
+             "Cannot create user signature",
+             options);
+  ::git_index *index;
+  ::git_tree* tree = nullptr;
+  ::git_oid tree_oid;
+  ::git_reference* ref = nullptr;
+  ::git_object* parent = nullptr;
+
+  int error;
+  if ((error = ::git_revparse_ext(&parent,
+                                  &ref,
+                                  repo,
+                                  "HEAD")) != GIT_ENOTFOUND) {
+
+    m_giterror(error,
+               "Error getting parent and reference",
+               options);
+  }
+
+  m_giterror(::git_repository_index(&index,
+                                    repo),
+             "Could not open repository index",
+             options);
+
+  m_giterror(::git_index_write_tree(&tree_oid,
+                                    index),
+             "Could not write tree",
+             options);
+  m_giterror(::git_index_write(index),
+             "Could not write index",
+             options);
+  ::git_tree_lookup(&tree,
+                    repo,
+                    &tree_oid);
+
+  ::git_oid new_commit_id;
+
+  m_giterror(::git_commit_create_v(&new_commit_id,
+                                   repo,
+                                   "HEAD",
+                                   signature,
+                                   signature,
+                                   "UTF-8",
+                                   message.c_str(),
+                                   tree,
+                                   parent ? 1 : 0,
+                                   parent),
+             "Error creating commit",
+             options);
+
+  ::git_index_free(index);
+  ::git_tree_free(tree);
+  ::git_object_free(parent);
+  ::git_reference_free(ref);
 }
