@@ -2,11 +2,13 @@
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
+#include <iomanip>
 #include <string>
 #include <regex>
 #include <filesystem>
 #include <getopt.h>
 #include <git2.h>
+// #include <libssh2.h>
 #include "md2cs_config.h"
 
 namespace fs = std::filesystem;
@@ -25,6 +27,20 @@ struct Options {
   Options() : debug(false), targetPath() { }
 };
 
+struct RepoDesc {
+  std::string protocol;
+  std::string host;
+  std::string user;
+  std::string repoName;
+  RepoDesc(std::string protocol,
+           std::string host,
+           std::string user,
+           std::string repoName) :
+    protocol(protocol),
+    host(host),
+    user(user),
+    repoName(repoName) { }
+};
 
 void processStoryFile(Options& options);
 inline const char* getOutputFilename(bool);
@@ -38,6 +54,10 @@ void commitGitRepo(::git_repository* repo,
 void m_giterror(int error,
                 const char *msg,
                 Options options);
+int cloneGitRepo(fs::path& location,
+                 std::string& url,
+                 Options& options);
+RepoDesc* url2RepoDesc(std::string& url);
 
 static void version(const char* progname) {
   std::cerr << progname << " version: "
@@ -126,8 +146,8 @@ processStoryFile(Options &options) {
 
   ::git_repository *repo = nullptr;
 
-  fs::path storyFile = { fs::current_path() };
-  storyFile /= storyFileName;
+  fs::path storyFile = { fs::current_path() /
+                         storyFileName };
 
   if (!fs::exists(storyFile)) {
     std::cerr << "file: "
@@ -136,18 +156,17 @@ processStoryFile(Options &options) {
     return;
   }
 
-  options.targetPath /= fs::current_path();
-  options.targetPath /= targetDir;
+  options.targetPath = (fs::current_path() / targetDir);
 
-  fs::path targetReposPath { fs::current_path() };
-  targetReposPath /= targetDir;
-  targetReposPath /= repositoriesDir;
-  fs::path targetRepoPath { fs::current_path() };
-  targetRepoPath /= targetDir;
-  targetRepoPath /= repositoryDir;
-  fs::path readMeRepoPath { fs::current_path() };
-  readMeRepoPath /= targetDir;
-  readMeRepoPath /= repositoryDir;
+  fs::path targetReposPath { fs::current_path() /
+                             targetDir /
+                             repositoriesDir };
+  fs::path targetRepoPath { fs::current_path() /
+                            targetDir /
+                            repositoryDir };
+  fs::path readMeRepoPath { fs::current_path() /
+                            targetDir /
+                            repositoryDir };
 
   m_giterror(::git_libgit2_init(),
              "Cannot initialize libgit2",
@@ -254,6 +273,31 @@ processStoryFile(Options &options) {
               currExtBranch.clear();
               currExtBranch = "main";
               currExtTag.clear();
+              fs::path curDir { fs::current_path() };
+              fs::current_path(targetReposPath);
+              fs::path newRepo;
+              RepoDesc *rd = url2RepoDesc(currExtRepo);
+              if (rd) {
+                std::cout << "protocol: " << rd->protocol
+                          << " host: " << rd->host
+                          << " user: " << rd->user
+                          << " repoName: " << rd->repoName
+                          << std::endl;
+                newRepo.clear();
+                newRepo = rd->repoName;
+                delete rd;
+              }
+              else {
+                std::cerr << "Incorrect repo url"
+                          << std::endl;
+              }
+
+              m_giterror(cloneGitRepo(newRepo,
+                                      currExtRepo,
+                                      options),
+                         "Clone failed",
+                         options);
+              fs::current_path(curDir);
             }
             if (cfg[1] == "branch") {
               currExtBranch.clear();
@@ -302,7 +346,12 @@ processStoryFile(Options &options) {
                   options);
   }
 
-  ::git_libgit2_shutdown();
+  int error;
+  while ((error = ::git_libgit2_shutdown()) != 0) {
+    if (error < GIT_OK)
+      m_giterror(error, "Libgit2 shutdown has failed", options);
+  }
+
   std::cout << "Pages processed: " << pagesProcessed << std::endl;
   std::cout << "Commit done: " << commitDone << std::endl;
 }
@@ -460,4 +509,238 @@ commitGitRepo(::git_repository* repo,
   ::git_tree_free(tree);
   ::git_object_free(parent);
   ::git_reference_free(ref);
+}
+
+struct ProgressData {
+  ::git_indexer_progress fetch_progress;
+  size_t completed_steps;
+  size_t total_steps;
+  const char *path;
+};
+
+static void
+printProgress(const ProgressData *pd)
+{
+  int network_percent = pd->fetch_progress.total_objects > 0 ?
+    (100*pd->fetch_progress.received_objects) / pd->fetch_progress.total_objects :
+    0;
+  int index_percent = pd->fetch_progress.total_objects > 0 ?
+    (100*pd->fetch_progress.indexed_objects) / pd->fetch_progress.total_objects :
+    0;
+
+  int checkout_percent = pd->total_steps > 0
+    ? (int)((100 * pd->completed_steps) / pd->total_steps)
+    : 0;
+  size_t kbytes = pd->fetch_progress.received_bytes / 1024;
+
+  if (pd->fetch_progress.total_objects &&
+      pd->fetch_progress.received_objects == pd->fetch_progress.total_objects) {
+    std::cout << "Resolving deltas " // Format: %u/%u\r",
+              <<  static_cast<unsigned int>(pd->fetch_progress.indexed_deltas)
+              << '/'
+              <<  static_cast<unsigned int>(pd->fetch_progress.total_deltas)
+              << std::endl;
+  } else {
+    // printf("net %3d%% (%4" PRIuZ " kb, %5u/%5u)  /  idx %3d%% (%5u/%5u)  /  chk %3d%% (%4" PRIuZ "/%4" PRIuZ")%s\n",
+    //        network_percent, kbytes,
+    //        pd->fetch_progress.received_objects, pd->fetch_progress.total_objects,
+    //        index_percent, pd->fetch_progress.indexed_objects, pd->fetch_progress.total_objects,
+    //        checkout_percent,
+    //        pd->completed_steps, pd->total_steps,
+    //        pd->path);
+    std::cout << "net ";
+    std::cout.width(3);
+    std::cout << network_percent
+              << " % ("
+              << kbytes
+              << " "
+              << pd->fetch_progress.received_objects
+              << " "
+              << pd->fetch_progress.total_objects
+              << " "
+              << index_percent
+              << " kb, (";
+    std::cout.width(5);
+    std::cout << static_cast<unsigned int>(pd->fetch_progress.indexed_objects)
+              << "/";
+    std::cout.width(5);
+    std::cout << static_cast<unsigned int>(pd->fetch_progress.total_objects)
+              << ")  /  chk ";
+    std::cout.width(3);
+    std::cout << checkout_percent
+              << " "
+              << pd->completed_steps
+              << " "
+              << pd->total_steps
+              << " "
+              << pd->path
+              << std::endl;
+  }
+}
+
+static int
+sidebandProgress(const char *str, int len, void *payload)
+{
+  (void)payload; /* unused */
+
+  std::cout << "remote: " << len << " " << str << std::endl;;
+  std::cout.flush();
+  return 0;
+}
+
+static int fetchProgress(const ::git_indexer_progress *stats,
+                         void *payload)
+{
+  ProgressData *pd = static_cast<ProgressData*>(payload);
+  pd->fetch_progress = *stats;
+  printProgress(pd);
+  return 0;
+}
+
+static void
+checkoutProgress(const char* path,
+                 size_t cur,
+                 size_t tot,
+                 void* payload) {
+  ProgressData *pd = static_cast<ProgressData*>(payload);
+  pd->completed_steps = cur;
+  pd->total_steps = tot;
+  pd->path = path;
+  printProgress(pd);
+}
+
+static int
+credAcquireCb(::git_credential **out,
+              const char *url,
+              const char *userNameURL,
+              unsigned int allowed_types,
+              void *payload) {
+  std::string userName { userNameURL } ; 
+  std::string passWord { "" };
+  unsigned int credentialTypes[] = { GIT_CREDENTIAL_SSH_KEY,
+                                     GIT_CREDENTIAL_USERPASS_PLAINTEXT,
+                                     GIT_CREDENTIAL_USERNAME };
+  static int nextTypeToTry = -1;
+    
+  int status = GIT_ERROR;
+
+  nextTypeToTry++;
+  std::cout << "Trying to get a credential"
+            << " nextTypetoTry: " << nextTypeToTry 
+            << " sizeof(credentialTypes) "
+            << (sizeof(credentialTypes) / sizeof(unsigned int))
+            << " currentType: " << credentialTypes[nextTypeToTry]
+            << std::endl;
+  if (nextTypeToTry < sizeof(credentialTypes) / sizeof(int)) {
+    switch (credentialTypes[nextTypeToTry]) {
+    case GIT_CREDENTIAL_SSH_KEY:
+      if (allowed_types & credentialTypes[nextTypeToTry]) {
+        fs::path privKey { "/home/juancardona/.ssh/id_rsa" };
+        fs::path pubKey  { privKey };
+        pubKey.replace_extension(".pub");
+        
+        std::cout << "Url: " << url << std::endl
+                  << "Username: " << userName << std::endl
+                  << "Private Key: " << privKey << std::endl
+                  << "Public Key: " << pubKey << std::endl
+                  << "Password: " << passWord << std::endl;
+        status = ::git_credential_ssh_key_new(out,
+                                              userName.c_str(),
+                                              pubKey.c_str(),
+                                              privKey.c_str(),
+                                              passWord.c_str());
+      }
+      break;
+    case GIT_CREDENTIAL_USERPASS_PLAINTEXT:
+      if (allowed_types & credentialTypes[nextTypeToTry]) {
+        std::cout << "Password: ";
+        std::cout.flush();
+        std::cin >> passWord;
+        status = ::git_credential_userpass_plaintext_new(out,
+                                                         userName.c_str(),
+                                                         passWord.c_str());
+      }
+      break;
+    case GIT_CREDENTIAL_USERNAME:
+      if (allowed_types & GIT_CREDENTIAL_USERNAME) {
+        status = ::git_credential_username_new(out,
+                                               userName.c_str());
+      }
+      break;
+    default:
+      status = GIT_ERROR;
+      break;
+    }
+  }
+  else {
+    status = GIT_ERROR;
+  }
+
+  std::cout << "Status: " << status << std::endl;
+
+  return status;
+}
+
+int
+cloneGitRepo(fs::path& location,
+             std::string& url,
+             Options& options) {
+  ProgressData pd = { {0} };
+  ::git_repository *clonedRepo = nullptr;
+  ::git_clone_options cloneOpts = GIT_CLONE_OPTIONS_INIT;
+  ::git_checkout_options checkoutOpts = GIT_CHECKOUT_OPTIONS_INIT;
+  int error;
+
+  checkoutOpts.checkout_strategy = GIT_CHECKOUT_SAFE;
+  checkoutOpts.progress_cb = checkoutProgress;
+  checkoutOpts.progress_payload = &pd;
+  cloneOpts.checkout_opts = checkoutOpts;
+  cloneOpts.fetch_opts.callbacks.sideband_progress = sidebandProgress;
+  cloneOpts.fetch_opts.callbacks.transfer_progress = &fetchProgress;
+  cloneOpts.fetch_opts.callbacks.credentials = credAcquireCb;
+  cloneOpts.fetch_opts.callbacks.payload = &pd;
+
+
+  std::cout << "Cloning: " << url << " at " << location << std::endl;
+  error = git_clone(&clonedRepo, url.c_str(), location.c_str(), nullptr); // &cloneOpts);
+  std::cout << std::endl;
+
+  if (error != 0) {
+    const git_error *err = ::git_error_last();
+    if (err) {
+      std::cerr << "ERROR "
+                << err->klass
+                << ":"
+                << err->message
+                << std::endl;
+    }
+    else {
+      std::cerr << "ERROR "
+                << error
+                << " no detailed info"
+                << std::endl;
+    }
+  }
+  else if (clonedRepo) {
+    git_repository_free(clonedRepo);
+  }
+  return error;
+}
+
+
+RepoDesc*
+url2RepoDesc(std::string& url) {
+  RepoDesc *retValue = nullptr;
+
+  const std::regex line_regex("(https)://(.*)/(.*)/(.*)\\.git");
+  std::smatch repoInfo;
+
+  if (std::regex_match(url,repoInfo,line_regex)) {
+    retValue = new RepoDesc(repoInfo[1],
+                            repoInfo[2],
+                            repoInfo[3],
+                            repoInfo[4]);
+  }
+
+  return retValue;
 }
