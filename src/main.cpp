@@ -10,13 +10,14 @@
 #include "md2cs_config.h"
 #include "helper.h"
 
-const char* readmeFilename   = "README.md";
-const char* storyFileName    = "story.md";
-const char* dotStoryFilename = ".story.md";
-const char* targetDir        = "target";
-const char* repositoriesDir  = "repositories";
-const char* repositoryDir    = "repository";
-const char* defaultBranch    = "main";
+const char* READMEFILENAME   = "README.md";
+const char* STORYFILENAME    = "story.md";
+const char* DOTSTORYFILENAME = ".story.md";
+const char* TARGETDIR        = "target";
+const char* REPOSITORIESDIR  = "repositories";
+const char* REPOSITORYDIR    = "repository";
+const char* DEFAULTBRANCH    = "main";
+const char* STARTXMLCOMMENT  = "<!--";
 
 inline const char* getOutputFilename(bool);
 
@@ -64,7 +65,7 @@ main(int argc, char *argv[]) {
     };
 
     c = ::getopt_long(argc, argv,
-                      "dvh",
+                      "dhv",
                       long_options,
                       &option_index);
     if (c == -1)
@@ -99,7 +100,7 @@ void
 processStoryFile(Options &options) {
 
   std::string currExtRepo;
-  std::string currExtBranch { defaultBranch };
+  std::string currExtBranch { DEFAULTBRANCH };
   std::string currExtTag;
   std::string message;
 
@@ -108,7 +109,7 @@ processStoryFile(Options &options) {
   ::git_repository *repo = nullptr;
 
   fs::path storyFile = { fs::current_path() /
-                         storyFileName };
+                         STORYFILENAME };
 
   if (!fs::exists(storyFile)) {
     std::cerr << "file: "
@@ -117,17 +118,14 @@ processStoryFile(Options &options) {
     return;
   }
 
-  options.targetPath = (fs::current_path() / targetDir);
+  options.targetPath = (fs::current_path() / TARGETDIR);
 
-  fs::path targetReposPath { fs::current_path() /
-                             targetDir /
-                             repositoriesDir };
-  fs::path targetRepoPath { fs::current_path() /
-                            targetDir /
-                            repositoryDir };
-  fs::path readMeRepoPath { fs::current_path() /
-                            targetDir /
-                            repositoryDir };
+  fs::path targetReposPath { options.targetPath /
+                             REPOSITORIESDIR };
+  fs::path targetRepoPath { options.targetPath /
+                            REPOSITORYDIR };
+  fs::path readMeRepoPath { options.targetPath /
+                            REPOSITORYDIR };
 
   m_giterror(::git_libgit2_init(),
              "Cannot initialize libgit2",
@@ -181,7 +179,7 @@ processStoryFile(Options &options) {
   int pagesProcessed = 0;
   int commitDone = 0;
   std::ostringstream* pBuffer = new std::ostringstream();
-  bool firstPage = true;
+   bool firstPage = true;
 
   while (std::getline(input,line)) {
     const std::regex line_regex("^(-|=){3}(-|=)* *$");
@@ -190,6 +188,15 @@ processStoryFile(Options &options) {
       case INCONFIG:
         state = OUTCONFIG;
         if (pBuffer) (*pBuffer) << line << std::endl;
+        if (!currExtTag.empty()) {
+          std::cout << "Tag to checkout: " << currExtTag << std::endl;
+          m_giterror(checkoutGitRepoFromTag(repo,
+                                            currExtTag,
+                                            options),
+                     "Checkout failed",
+                     options);
+          currExtTag.clear();
+        }
         break;
       case OUTCONFIG:
         {
@@ -266,7 +273,7 @@ processStoryFile(Options &options) {
             }
             if (cfg[1] == "tag") {
               currExtTag.clear();
-              currExtBranch = cfg[2];
+              currExtTag = cfg[2];
             }
             if (cfg[1] == "focus") {
               if (pBuffer) (*pBuffer) << line << std::endl;
@@ -275,7 +282,7 @@ processStoryFile(Options &options) {
         }
         break;
       case OUTCONFIG:
-        const std::regex cfg_regex("### +(.*)");
+        const std::regex cfg_regex("^### +(.*)");
         std::smatch cfg;
         if (std::regex_match(line, cfg, cfg_regex)) {
           message.clear();
@@ -318,6 +325,6 @@ processStoryFile(Options &options) {
 }
 
 inline const char* getOutputFilename(bool isReadme) {
-  return isReadme ? readmeFilename :
-   dotStoryFilename;
+  return isReadme ? READMEFILENAME :
+   DOTSTORYFILENAME;
 }

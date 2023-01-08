@@ -1,4 +1,5 @@
 #include "helper.h"
+#include <string.h>
 
 void
 addBuffer2GitRepo(::git_repository* repo,
@@ -385,4 +386,22 @@ url2RepoDesc(std::string& url) {
   }
 
   return retValue;
+}
+
+int
+checkoutGitRepoFromTag(::git_repository* repo,
+                       std::string& tag,
+                       Options& options) {
+  ::git_tree *tree = NULL;
+  ::git_object *obj;
+  std::string rtag("remote/");
+  rtag.append(tag);
+
+  int error = ::git_revparse_single(&obj, repo, rtag.c_str());
+
+  std::cout << "What: " << error << ::std::endl;
+  // ::git_tag* gtag = static_cast<const git_tag*>(obj);
+  // ::git_oid *git_oid_tag = ::git_tag_id(gtag);
+  // return ::git_tree_lookup(&tree, repo, git_oid_tag);
+  return error;
 }

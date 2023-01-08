@@ -9,6 +9,8 @@
 
 namespace fs = std::filesystem;
 
+
+
 struct Options {
   bool debug;
   fs::path targetPath;
@@ -57,4 +59,7 @@ void m_giterror(int error,
 int cloneGitRepo(fs::path& location,
                  std::string& url,
                  Options& options);
+int checkoutGitRepoFromTag(::git_repository* repo,
+                           std::string& tag,
+                           Options& options);
 RepoDesc* url2RepoDesc(std::string& url);
