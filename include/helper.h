@@ -5,11 +5,10 @@
 #include <string>
 #include <sstream>
 #include <regex>
+#include <map>
 #include <git2.h>
 
 namespace fs = std::filesystem;
-
-
 
 struct Options {
   bool debug;
@@ -17,11 +16,17 @@ struct Options {
   Options() : debug(false), targetPath() { }
 };
 
+enum CheckoutType { BRANCH, TAG };
+
 struct RepoDesc {
   std::string protocol;
   std::string host;
   std::string user;
   std::string repoName;
+  fs::path repoDir;
+  CheckoutType checkoutType;
+  std::string checkoutName;
+  ::git_repository *repo;
   RepoDesc(std::string protocol,
            std::string host,
            std::string user,
@@ -29,7 +34,12 @@ struct RepoDesc {
     protocol(protocol),
     host(host),
     user(user),
-    repoName(repoName) { }
+    repoName(repoName),
+    repoDir(""),
+    checkoutType(BRANCH),
+    checkoutName("main"),
+    repo(nullptr)
+    { }
 };
 
 void processStoryFile(Options& options);
@@ -58,8 +68,9 @@ void m_giterror(int error,
                 Options options);
 int cloneGitRepo(fs::path& location,
                  std::string& url,
+		 RepoDesc* rd,
                  Options& options);
-int checkoutGitRepoFromTag(::git_repository* repo,
-                           std::string& tag,
-                           Options& options);
+int checkoutGitRepoFromName(::git_repository* repo,
+			    const std::string& tag,
+			    Options& options);
 RepoDesc* url2RepoDesc(std::string& url);

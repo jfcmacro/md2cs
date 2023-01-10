@@ -1,4 +1,5 @@
 #include "helper.h"
+#include <sstream>
 #include <string.h>
 
 void
@@ -329,9 +330,10 @@ credAcquireCb(::git_credential **out,
 int
 cloneGitRepo(fs::path& location,
              std::string& url,
+	     RepoDesc* rd,
              Options& options) {
   ProgressData pd = { {0} };
-  ::git_repository *clonedRepo = nullptr;
+  // ::git_repository *clonedRepo = nullptr;
   ::git_clone_options cloneOpts = GIT_CLONE_OPTIONS_INIT;
   ::git_checkout_options checkoutOpts = GIT_CHECKOUT_OPTIONS_INIT;
   int error;
@@ -346,7 +348,7 @@ cloneGitRepo(fs::path& location,
   cloneOpts.fetch_opts.callbacks.payload = &pd;
 
   std::cout << "Cloning: " << url << " at " << location << std::endl;
-  error = git_clone(&clonedRepo, url.c_str(), location.c_str(), nullptr); // &cloneOpts);
+  error = git_clone(&rd->repo, url.c_str(), location.c_str(), nullptr); // &cloneOpts);
   std::cout << std::endl;
 
   if (error != 0) {
@@ -365,9 +367,10 @@ cloneGitRepo(fs::path& location,
                 << std::endl;
     }
   }
-  else if (clonedRepo) {
-    git_repository_free(clonedRepo);
-  }
+  // else if (clonedRepo) {
+  //   // ::git_repository_free(clonedRepo);
+    
+  // }
   return error;
 }
 
@@ -388,20 +391,199 @@ url2RepoDesc(std::string& url) {
   return retValue;
 }
 
+static int
+getAnnotatedCommitFromName(::git_annotated_commit** commit,
+			   ::git_repository* repo,
+			   const std::string& name) {
+  ::git_reference *ref;
+  int error = ::git_reference_dwim(&ref, repo, name.c_str());
+  
+  if (error == GIT_OK) {
+    ::git_annotated_commit_from_ref(commit, repo, ref);
+    ::git_reference_free(ref);
+  }
+  else {
+    ::git_reference_free(ref);
+    ::git_object *obj;
+    
+    error = ::git_revparse_single(&obj, repo, name.c_str());
+    
+    if (error == GIT_OK) {
+      ::git_annotated_commit_lookup(commit, repo, ::git_object_id(obj));
+      ::git_object_free(obj);
+    }
+  }
+
+  return error;
+}
+
+static int
+getAnnotatedCommitFromGuessingName(::git_annotated_commit** commit,
+				   ::git_repository* repo,
+				   const std::string& name) {
+  ::git_strarray   remotes { nullptr, 0 };
+  ::git_reference* remote_ref  { nullptr };
+  int error;
+
+  if ((error = ::git_remote_list(&remotes, repo)) < GIT_OK) {
+    ::git_reference_free(remote_ref);
+    ::git_strarray_dispose(&remotes);
+
+    return error;
+  }
+ 
+  size_t i;
+  for (i = 0; i < remotes.count; i++) {
+    std::stringstream refname;
+
+    refname << "ref/remotes/" << remotes.strings[i] << "/" << name;
+    
+    if ((error = ::git_reference_lookup(&remote_ref, repo, refname.str().c_str())) < GIT_OK)
+      if (error < 0 and error != GIT_ENOTFOUND) break;
+
+    break;
+  }
+
+  if (!remote_ref) {
+    error = GIT_ENOTFOUND;
+    ::git_reference_free(remote_ref);
+    ::git_strarray_dispose(&remotes);
+    return error;
+  }
+
+  error = ::git_annotated_commit_from_ref(commit, repo, remote_ref);
+  
+  ::git_reference_free(remote_ref);
+  ::git_strarray_dispose(&remotes);
+  return error; 
+}
+
+static int
+performCheckoutRef(::git_repository *repo,
+		   ::git_annotated_commit *target,
+		   const std::string& target_ref) {
+  ::git_checkout_options checkout_opts = GIT_CHECKOUT_OPTIONS_INIT;
+  ::git_reference *ref = NULL, *branch = NULL;
+  ::git_commit *target_commit = NULL;
+  int error;
+
+  /** Setup our checkout options from the parsed options */
+  checkout_opts.checkout_strategy = GIT_CHECKOUT_SAFE;
+  // if (opts->force)
+  //   checkout_opts.checkout_strategy = GIT_CHECKOUT_FORCE;
+
+  // if (opts->progress)
+  //   checkout_opts.progress_cb = print_checkout_progress;
+
+  // if (opts->perf)
+  //   checkout_opts.perfdata_cb = print_perf_data;
+
+  /** Grab the commit we're interested to move to */
+  error = ::git_commit_lookup(&target_commit, repo, git_annotated_commit_id(target));
+  
+  if (error != GIT_OK) {
+    std::cerr << "Failed to lookup commit: "
+	      << git_error_last()->message << std::endl;
+    ::git_commit_free(target_commit);
+    ::git_reference_free(branch);
+    ::git_reference_free(ref);
+
+    return error;
+  }
+
+  /**
+   * Perform the checkout so the workdir corresponds to what target_commit
+   * contains.
+   *
+   * Note that it's okay to pass a git_commit here, because it will be
+   * peeled to a tree.
+   */
+  error = ::git_checkout_tree(repo, (const git_object *)target_commit, &checkout_opts);
+  
+  if (error != GIT_OK) {
+    std::cerr << "failed to checkout tree: "
+	      << git_error_last()->message
+	      << std::endl;
+    
+    ::git_commit_free(target_commit);
+    ::git_reference_free(branch);
+    ::git_reference_free(ref);
+
+    return error;
+  }
+
+  /**
+   * Now that the checkout has completed, we have to update HEAD.
+   *
+   * Depending on the "origin" of target (ie. it's an OID or a branch name),
+   * we might need to detach HEAD.
+   */
+  if (::git_annotated_commit_ref(target)) {
+    const char *target_head;
+
+    if ((error = ::git_reference_lookup(&ref, repo, git_annotated_commit_ref(target))) < 0) {
+      if (error != 0) {
+	std::cerr << "failed to update HEAD reference: "
+		  << git_error_last()->message << std::endl;
+	::git_commit_free(target_commit);
+	::git_reference_free(branch);
+	::git_reference_free(ref);
+	
+	return error;
+      }
+    }
+    
+    if (::git_reference_is_remote(ref)) {
+      if ((error = ::git_branch_create_from_annotated(&branch, repo, target_ref.c_str(), target, 0)) < 0) {
+	std::cerr << "failed to update HEAD reference: "
+		  << ::git_error_last()->message << std::endl;
+	::git_commit_free(target_commit);
+	::git_reference_free(branch);
+	::git_reference_free(ref);
+	
+	return error;
+      }
+      target_head = ::git_reference_name(branch);
+    } else {
+      target_head = ::git_annotated_commit_ref(target);
+    }
+
+    error = ::git_repository_set_head(repo, target_head);
+  } else {
+    error = ::git_repository_set_head_detached_from_annotated(repo, target);
+  }
+
+  if (error != 0) {
+    std::cerr << "failed to update HEAD reference: "
+	      << ::git_error_last()->message << std::endl;
+  }
+  
+  ::git_commit_free(target_commit);
+  ::git_reference_free(branch);
+  ::git_reference_free(ref);
+
+  return error;
+}
+
+
 int
-checkoutGitRepoFromTag(::git_repository* repo,
-                       std::string& tag,
-                       Options& options) {
-  ::git_tree *tree = NULL;
-  ::git_object *obj;
-  std::string rtag("remote/");
-  rtag.append(tag);
+checkoutGitRepoFromName(::git_repository* repo,
+			const std::string& name,
+			Options& options) {
+  ::git_annotated_commit *commit;
+  int error;
 
-  int error = ::git_revparse_single(&obj, repo, rtag.c_str());
+  if ((error = getAnnotatedCommitFromName(&commit, repo, name) < GIT_OK) and
+      (error = getAnnotatedCommitFromGuessingName(&commit, repo, name) < GIT_OK)) {
+    std::cerr << "Failed to resolve " << name << ": "
+	      << ::git_error_last()->message << std::endl;
+    return error;
+  }
 
-  std::cout << "What: " << error << ::std::endl;
-  // ::git_tag* gtag = static_cast<const git_tag*>(obj);
-  // ::git_oid *git_oid_tag = ::git_tag_id(gtag);
-  // return ::git_tree_lookup(&tree, repo, git_oid_tag);
+  error = performCheckoutRef(repo,
+			     commit,
+			     name);
+
+  ::git_annotated_commit_free(commit);
   return error;
 }
