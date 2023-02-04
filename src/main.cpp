@@ -180,7 +180,7 @@ processStoryFile(Options &options) {
   int pagesProcessed = 0;
   int commitDone = 0;
   std::ostringstream* pBuffer = new std::ostringstream();
-   bool firstPage = true;
+  bool firstPage = true;
 
   while (std::getline(input,line)) {
     const std::regex line_regex("^(-|=){3}(-|=)* *$");
@@ -200,9 +200,13 @@ processStoryFile(Options &options) {
                                              options),
                      "Checkout failed",
                      options);
-          // Checkout it is successfull
-          
+          // TODO add diffDirAction
+
           fs::current_path(curDir);
+          diffDirAction(repo,
+                        extRepos[currExtRepo]->repoDir,
+                        curDir,
+                        options, true);
           currCheckoutName.clear();
         }
         break;

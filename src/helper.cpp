@@ -66,7 +66,34 @@ addFile2GitRepo(::git_repository* repo,
                                     filename),
              error_msg.c_str(),
              options);
-  
+
+  m_giterror(::git_index_write(index),
+             "Index cannot be written",
+             options);
+
+  ::git_index_free(index);
+}
+
+void
+addPath2GitRepo(::git_repository* repo,
+                const fs::path& path,
+                Options& options) {
+  ::git_index *index;
+
+  m_giterror(::git_repository_index(&index,
+                                    repo),
+             "Could not open repository index",
+             options);
+
+  std::string error_msg { "File: " };
+  error_msg += path;
+  error_msg += " cannot be remove";
+
+  m_giterror(::git_index_add_bypath(index,
+                                    path.c_str()),
+             error_msg.c_str(),
+             options);
+
   m_giterror(::git_index_write(index),
              "Index cannot be written",
              options);
@@ -93,7 +120,7 @@ removeFile2GitRepo(::git_repository* repo,
                                        filename),
              error_msg.c_str(),
              options);
-  
+
   m_giterror(::git_index_write(index),
              "Index cannot be written",
              options);
@@ -121,7 +148,7 @@ removeDir2GitRepo(::git_repository* repo,
                                           GIT_INDEX_STAGE_ANY),
              error_msg.c_str(),
              options);
-  
+
   m_giterror(::git_index_write(index),
              "Index cannot be written",
              options);
@@ -452,7 +479,7 @@ cloneGitRepo(fs::path& location,
   }
   // else if (clonedRepo) {
   //   // ::git_repository_free(clonedRepo);
-    
+
   // }
   return error;
 }
@@ -480,7 +507,7 @@ getAnnotatedCommitFromName(::git_annotated_commit** commit,
                            const std::string& name) {
   ::git_reference *ref;
   int error = ::git_reference_dwim(&ref, repo, name.c_str());
-  
+
   if (error == GIT_OK) {
     ::git_annotated_commit_from_ref(commit, repo, ref);
     ::git_reference_free(ref);
@@ -488,9 +515,9 @@ getAnnotatedCommitFromName(::git_annotated_commit** commit,
   else {
     // ::git_reference_free(ref);
     ::git_object *obj;
-    
+
     error = ::git_revparse_single(&obj, repo, name.c_str());
-    
+
     if (error == GIT_OK) {
       ::git_annotated_commit_lookup(commit, repo, ::git_object_id(obj));
       ::git_object_free(obj);
@@ -514,13 +541,13 @@ getAnnotatedCommitFromGuessingName(::git_annotated_commit** commit,
 
     return error;
   }
- 
+
   size_t i;
   for (i = 0; i < remotes.count; i++) {
     std::stringstream refname;
 
     refname << "ref/remotes/" << remotes.strings[i] << "/" << name;
-    
+
     if ((error = ::git_reference_lookup(&remote_ref, repo, refname.str().c_str())) < GIT_OK)
       if (error < 0 and error != GIT_ENOTFOUND) break;
 
@@ -535,10 +562,10 @@ getAnnotatedCommitFromGuessingName(::git_annotated_commit** commit,
   }
 
   error = ::git_annotated_commit_from_ref(commit, repo, remote_ref);
-  
+
   ::git_reference_free(remote_ref);
   ::git_strarray_dispose(&remotes);
-  return error; 
+  return error;
 }
 
 static int
@@ -549,7 +576,7 @@ performCheckoutRef(::git_repository *repo,
   ::git_reference *ref = NULL, *branch = NULL;
   ::git_commit *target_commit = NULL;
   int error;
-  
+
   /** Setup our checkout options from the parsed options */
   checkout_opts.checkout_strategy = GIT_CHECKOUT_SAFE;
   // if (opts->force)
@@ -563,7 +590,7 @@ performCheckoutRef(::git_repository *repo,
 
   /** Grab the commit we're interested to move to */
   error = ::git_commit_lookup(&target_commit, repo, git_annotated_commit_id(target));
-  
+
   if (error != GIT_OK) {
     std::cerr << "Failed to lookup commit: "
               << git_error_last()->message << std::endl;
@@ -582,12 +609,12 @@ performCheckoutRef(::git_repository *repo,
    * peeled to a tree.
    */
   error = ::git_checkout_tree(repo, (const git_object *)target_commit, &checkout_opts);
-  
+
   if (error != GIT_OK) {
     std::cerr << "failed to checkout tree: "
               << git_error_last()->message
               << std::endl;
-    
+
     ::git_commit_free(target_commit);
     ::git_reference_free(branch);
     ::git_reference_free(ref);
@@ -611,11 +638,11 @@ performCheckoutRef(::git_repository *repo,
         ::git_commit_free(target_commit);
         ::git_reference_free(branch);
         ::git_reference_free(ref);
-        
+
         return error;
       }
     }
-    
+
     if (::git_reference_is_remote(ref)) {
       if ((error = ::git_branch_create_from_annotated(&branch, repo, target_ref.c_str(), target, 0)) < 0) {
         std::cerr << "failed to update HEAD reference: "
@@ -623,7 +650,7 @@ performCheckoutRef(::git_repository *repo,
         ::git_commit_free(target_commit);
         ::git_reference_free(branch);
         ::git_reference_free(ref);
-        
+
         return error;
       }
       target_head = ::git_reference_name(branch);
@@ -640,7 +667,7 @@ performCheckoutRef(::git_repository *repo,
     std::cerr << "failed to update HEAD reference: "
               << ::git_error_last()->message << std::endl;
   }
-  
+
   ::git_commit_free(target_commit);
   ::git_reference_free(branch);
   ::git_reference_free(ref);
@@ -742,13 +769,41 @@ diffFiles(fs::path file1,
   return buffer1 == buffer2;
 }
 
+void getRelativePathFrom(const fs::path& firstPath,
+                         const fs::path& secondPath,
+                         fs::path& result) {
+
+  int distFirstPath = std::distance(firstPath.begin(),
+                                    firstPath.end());
+  int distSecondPath = std::distance(secondPath.begin(),
+                                     secondPath.end());
+
+  const fs::path *longPath = &firstPath;
+  const fs::path *shortPath = &secondPath;
+
+  if (distFirstPath <= distSecondPath) {
+    longPath = &secondPath;
+    shortPath = &firstPath;
+  }
+
+  fs::path::iterator itl = longPath->begin();
+  for (fs::path::iterator its = shortPath->begin();
+       itl != longPath->end() and its != shortPath->end() and *itl == *its;
+       ++itl, ++its);
+
+  result.clear();
+  for (; itl != longPath->end(); ++itl)
+    result /= *itl;
+}
+
 void
-diffDirAction(fs::path srcDir,
+diffDirAction(::git_repository* repo,
+              fs::path srcDir,
               fs::path dstDir,
               Options& options,
               bool isRoot) {
   enum IDX_DIRAndFiles { SRCFILES, SRCDIRS, DSTFILES, DSTDIRS };
-  std::set<fs::path> dirAndFiles[4]; 
+  std::set<fs::path> dirAndFiles[4];
 
   for (const auto& entry : fs::directory_iterator(srcDir))
     splitFilesDirs(dirAndFiles[SRCDIRS], dirAndFiles[SRCFILES], entry.path());
@@ -757,7 +812,7 @@ diffDirAction(fs::path srcDir,
 
   // When is on the root it must ignore the same directories and files
   if (isRoot) {
-    const fs::path igDirs[] = { ".git" };  
+    const fs::path igDirs[] = { ".git" };
     std::set<fs::path> ignoreDirs(igDirs, igDirs + sizeof(igDirs) / sizeof(igDirs[0]));
     const fs::path igFiles[] = { "README.md", ".story.md" };
     std::set<fs::path> ignoreFiles(igFiles, igFiles + sizeof(igFiles) / sizeof(igFiles[0]));
@@ -781,7 +836,10 @@ diffDirAction(fs::path srcDir,
 
     if (!diffFiles(sFile, dFile)) {
       fs::copy(sFile, dFile, fs::copy_options::overwrite_existing);
-      // TODO git_add
+      fs::path dRelPath;
+      fs::path currDir { fs::current_path() };
+      getRelativePathFrom(dFile, currDir, dRelPath);
+      addPath2GitRepo(repo, dRelPath, options);
     }
   }
 
@@ -795,7 +853,10 @@ diffDirAction(fs::path srcDir,
     dFile /= *it;
 
     fs::copy(sFile, dFile);
-    // TODO git_add
+    fs::path dRelPath;
+    fs::path currDir { fs::current_path() };
+    getRelativePathFrom(dFile, currDir, dRelPath);
+    addPath2GitRepo(repo, dRelPath, options);
   }
 
   // Which files exists on dst but doesn't exists on src
@@ -822,7 +883,7 @@ diffDirAction(fs::path srcDir,
        workSet.end() != it; ++it) {
     fs::path dDir(dstDir);
     dDir /= *it;
-    
+
     // TODO fs::remove_all(dDir);
   }
 
@@ -833,7 +894,8 @@ diffDirAction(fs::path srcDir,
     sDir /= *it;
     fs::path dDir(dstDir);
     dDir /= *it;
-    diffDirAction(sDir,
+    diffDirAction(repo,
+                  sDir,
                   dDir,
                   options);
   }

@@ -54,6 +54,12 @@ void add2GitRepo(::git_repository *repo,
 void addFile2GitRepo(::git_repository *repo,
                      const fs::path& filePath,
                      Options& options);
+void addFile2GitRepo(::git_repository *repo,
+                     const char* filename,
+                     Options& options);
+void addPath2GitRepo(::git_repository *repo,
+                     const fs::path& filePath,
+                     Options& options);
 void removeFile2GitRepo(::git_repository *repo,
                         const fs::path& filePath,
                         Options& options);
@@ -78,7 +84,8 @@ int checkoutGitRepoFromName(::git_repository* repo,
                             const std::string& tag,
                             Options& options);
 RepoDesc* url2RepoDesc(std::string& url);
-void diffDirAction(fs::path srcDir,
+void diffDirAction(::git_repository* repo,
+                   fs::path srcDir,
                    fs::path dstDir,
                    Options& options,
                    bool isRoot = false);
