@@ -1,5 +1,9 @@
 #include "helper.h"
-#include <sstream>
+#include <vector>
+#include <set>
+#include <algorithm>
+#include <fstream>
+#include <iterator>
 #include <string.h>
 
 void
@@ -43,6 +47,88 @@ addBuffer2GitRepo(::git_repository* repo,
   ::git_index_free(index);
 }
 
+void
+addFile2GitRepo(::git_repository* repo,
+                const char* filename,
+                Options& options) {
+  ::git_index *index;
+
+  m_giterror(::git_repository_index(&index,
+                                    repo),
+             "Could not open repository index",
+             options);
+
+  std::string error_msg { "File: " };
+  error_msg += filename;
+  error_msg += " cannot be remove";
+
+  m_giterror(::git_index_add_bypath(index,
+                                    filename),
+             error_msg.c_str(),
+             options);
+  
+  m_giterror(::git_index_write(index),
+             "Index cannot be written",
+             options);
+
+  ::git_index_free(index);
+}
+
+void
+removeFile2GitRepo(::git_repository* repo,
+                   const char* filename,
+                   Options& options) {
+  ::git_index *index;
+
+  m_giterror(::git_repository_index(&index,
+                                    repo),
+             "Could not open repository index",
+             options);
+
+  std::string error_msg { "File: " };
+  error_msg += filename;
+  error_msg += " cannot be remove";
+
+  m_giterror(::git_index_remove_bypath(index,
+                                       filename),
+             error_msg.c_str(),
+             options);
+  
+  m_giterror(::git_index_write(index),
+             "Index cannot be written",
+             options);
+
+  ::git_index_free(index);
+}
+
+void
+removeDir2GitRepo(::git_repository* repo,
+                  const char* dirName,
+                  Options& options) {
+  ::git_index *index;
+
+  m_giterror(::git_repository_index(&index,
+                                    repo),
+             "Could not open repository index",
+             options);
+
+  std::string error_msg { "File: " };
+  error_msg += dirName;
+  error_msg += " cannot be remove";
+
+  m_giterror(::git_index_remove_directory(index,
+                                          dirName,
+                                          GIT_INDEX_STAGE_ANY),
+             error_msg.c_str(),
+             options);
+  
+  m_giterror(::git_index_write(index),
+             "Index cannot be written",
+             options);
+
+  ::git_index_free(index);
+}
+
 void moveFile2GitRepo(::git_repository *repo,
                       const fs::path& srcPath,
                       const fs::path& dstPath,
@@ -54,20 +140,19 @@ void m_giterror(int error,
                 Options options) {
 
   if (error < GIT_OK) {
-      const ::git_error *g_error = ::git_error_last();
-      std::cout << msg
-                << " due ("
-                << error
-                << ") "
-                << g_error->klass
-                << " "
-                << g_error->message
-                << std::endl;
-      if (!options.debug)
-        fs::remove_all(options.targetPath);
-      ::exit(EXIT_FAILURE);
-    }
-
+    const ::git_error *g_error = ::git_error_last();
+    std::cout << msg
+              << " due ("
+              << error
+              << ") "
+              << g_error->klass
+              << " "
+              << g_error->message
+              << std::endl;
+    if (!options.debug)
+      fs::remove_all(options.targetPath);
+    ::exit(EXIT_FAILURE);
+  }
 }
 
 void
@@ -225,8 +310,7 @@ printProgress(const ProgressData *pd)
 }
 
 static int
-sidebandProgress(const char *str, int len, void *payload)
-{
+sidebandProgress(const char *str, int len, void *payload) {
   (void)payload; /* unused */
 
   std::cout << "remote: " << len << " " << str << std::endl;;
@@ -235,8 +319,7 @@ sidebandProgress(const char *str, int len, void *payload)
 }
 
 static int fetchProgress(const ::git_indexer_progress *stats,
-                         void *payload)
-{
+                         void *payload) {
   ProgressData *pd = static_cast<ProgressData*>(payload);
   pd->fetch_progress = *stats;
   printProgress(pd);
@@ -330,7 +413,7 @@ credAcquireCb(::git_credential **out,
 int
 cloneGitRepo(fs::path& location,
              std::string& url,
-	     RepoDesc* rd,
+             RepoDesc* rd,
              Options& options) {
   ProgressData pd = { {0} };
   // ::git_repository *clonedRepo = nullptr;
@@ -393,8 +476,8 @@ url2RepoDesc(std::string& url) {
 
 static int
 getAnnotatedCommitFromName(::git_annotated_commit** commit,
-			   ::git_repository* repo,
-			   const std::string& name) {
+                           ::git_repository* repo,
+                           const std::string& name) {
   ::git_reference *ref;
   int error = ::git_reference_dwim(&ref, repo, name.c_str());
   
@@ -403,7 +486,7 @@ getAnnotatedCommitFromName(::git_annotated_commit** commit,
     ::git_reference_free(ref);
   }
   else {
-    ::git_reference_free(ref);
+    // ::git_reference_free(ref);
     ::git_object *obj;
     
     error = ::git_revparse_single(&obj, repo, name.c_str());
@@ -419,8 +502,8 @@ getAnnotatedCommitFromName(::git_annotated_commit** commit,
 
 static int
 getAnnotatedCommitFromGuessingName(::git_annotated_commit** commit,
-				   ::git_repository* repo,
-				   const std::string& name) {
+                                   ::git_repository* repo,
+                                   const std::string& name) {
   ::git_strarray   remotes { nullptr, 0 };
   ::git_reference* remote_ref  { nullptr };
   int error;
@@ -460,13 +543,13 @@ getAnnotatedCommitFromGuessingName(::git_annotated_commit** commit,
 
 static int
 performCheckoutRef(::git_repository *repo,
-		   ::git_annotated_commit *target,
-		   const std::string& target_ref) {
+                   ::git_annotated_commit *target,
+                   const std::string& target_ref) {
   ::git_checkout_options checkout_opts = GIT_CHECKOUT_OPTIONS_INIT;
   ::git_reference *ref = NULL, *branch = NULL;
   ::git_commit *target_commit = NULL;
   int error;
-
+  
   /** Setup our checkout options from the parsed options */
   checkout_opts.checkout_strategy = GIT_CHECKOUT_SAFE;
   // if (opts->force)
@@ -483,7 +566,7 @@ performCheckoutRef(::git_repository *repo,
   
   if (error != GIT_OK) {
     std::cerr << "Failed to lookup commit: "
-	      << git_error_last()->message << std::endl;
+              << git_error_last()->message << std::endl;
     ::git_commit_free(target_commit);
     ::git_reference_free(branch);
     ::git_reference_free(ref);
@@ -502,8 +585,8 @@ performCheckoutRef(::git_repository *repo,
   
   if (error != GIT_OK) {
     std::cerr << "failed to checkout tree: "
-	      << git_error_last()->message
-	      << std::endl;
+              << git_error_last()->message
+              << std::endl;
     
     ::git_commit_free(target_commit);
     ::git_reference_free(branch);
@@ -523,25 +606,25 @@ performCheckoutRef(::git_repository *repo,
 
     if ((error = ::git_reference_lookup(&ref, repo, git_annotated_commit_ref(target))) < 0) {
       if (error != 0) {
-	std::cerr << "failed to update HEAD reference: "
-		  << git_error_last()->message << std::endl;
-	::git_commit_free(target_commit);
-	::git_reference_free(branch);
-	::git_reference_free(ref);
-	
-	return error;
+        std::cerr << "failed to update HEAD reference: "
+                  << git_error_last()->message << std::endl;
+        ::git_commit_free(target_commit);
+        ::git_reference_free(branch);
+        ::git_reference_free(ref);
+        
+        return error;
       }
     }
     
     if (::git_reference_is_remote(ref)) {
       if ((error = ::git_branch_create_from_annotated(&branch, repo, target_ref.c_str(), target, 0)) < 0) {
-	std::cerr << "failed to update HEAD reference: "
-		  << ::git_error_last()->message << std::endl;
-	::git_commit_free(target_commit);
-	::git_reference_free(branch);
-	::git_reference_free(ref);
-	
-	return error;
+        std::cerr << "failed to update HEAD reference: "
+                  << ::git_error_last()->message << std::endl;
+        ::git_commit_free(target_commit);
+        ::git_reference_free(branch);
+        ::git_reference_free(ref);
+        
+        return error;
       }
       target_head = ::git_reference_name(branch);
     } else {
@@ -555,7 +638,7 @@ performCheckoutRef(::git_repository *repo,
 
   if (error != 0) {
     std::cerr << "failed to update HEAD reference: "
-	      << ::git_error_last()->message << std::endl;
+              << ::git_error_last()->message << std::endl;
   }
   
   ::git_commit_free(target_commit);
@@ -565,25 +648,193 @@ performCheckoutRef(::git_repository *repo,
   return error;
 }
 
-
 int
 checkoutGitRepoFromName(::git_repository* repo,
-			const std::string& name,
-			Options& options) {
+                        const std::string& name,
+                        Options& options) {
   ::git_annotated_commit *commit;
   int error;
 
   if ((error = getAnnotatedCommitFromName(&commit, repo, name) < GIT_OK) and
       (error = getAnnotatedCommitFromGuessingName(&commit, repo, name) < GIT_OK)) {
     std::cerr << "Failed to resolve " << name << ": "
-	      << ::git_error_last()->message << std::endl;
+              << ::git_error_last()->message << std::endl;
     return error;
   }
 
-  error = performCheckoutRef(repo,
-			     commit,
-			     name);
+  error = performCheckoutRef(repo, commit, name);
 
   ::git_annotated_commit_free(commit);
+
   return error;
+}
+
+void
+splitFilesDirs(std::set<fs::path>& dirs,
+               std::set<fs::path>& files,
+               const fs::path& path) {
+  if (fs::is_directory(path))
+    dirs.insert(path.filename());
+  else
+    files.insert(path.filename());
+}
+
+void
+setIntersection(const std::set<fs::path>& firstSet,
+                const std::set<fs::path>& secondSet,
+                std::set<fs::path>& result) {
+  std::vector<fs::path> vectResult(std::max(firstSet.size(),
+                                            secondSet.size()));
+  std::vector<fs::path>::iterator it;
+
+  it = std::set_intersection(firstSet.begin(), firstSet.end(),
+                             secondSet.begin(), secondSet.end(),
+                             vectResult.begin());
+
+  vectResult.resize(it-vectResult.begin());
+
+  result.clear();
+  for (it=vectResult.begin(); it!=vectResult.end(); ++it) {
+    result.insert(*it);
+  }
+}
+
+void
+setDifference(const std::set<fs::path>& firstSet,
+              const std::set<fs::path>& secondSet,
+              std::set<fs::path>& result) {
+  std::vector<fs::path> vectResult(std::max(firstSet.size(),
+                                            secondSet.size()));
+  std::vector<fs::path>::iterator it;
+
+  it = std::set_difference(firstSet.begin(), firstSet.end(),
+                           secondSet.begin(), secondSet.end(),
+                           vectResult.begin());
+
+  vectResult.resize(it-vectResult.begin());
+
+  result.clear();
+  for (it=vectResult.begin(); it!=vectResult.end(); ++it) {
+    result.insert(*it);
+  }
+}
+
+void
+cleanIgnoreSet(std::set<fs::path>& set,
+               const std::set<fs::path>& ignoreSet) {
+  std::set<fs::path> tmp;
+  setDifference(set, ignoreSet, tmp);
+  set.clear();
+  set.merge(tmp);
+}
+
+bool
+diffFiles(fs::path file1,
+          fs::path file2) {
+  std::ifstream ifstream1(file1);
+  std::ifstream ifstream2(file2);
+  std::istream_iterator<char> begin1(ifstream1), end1;
+  std::istream_iterator<char> begin2(ifstream2), end2;
+
+  std::vector<char> buffer1(begin1, end1);
+  std::vector<char> buffer2(begin2, end2);
+
+  return buffer1 == buffer2;
+}
+
+void
+diffDirAction(fs::path srcDir,
+              fs::path dstDir,
+              Options& options,
+              bool isRoot) {
+  enum IDX_DIRAndFiles { SRCFILES, SRCDIRS, DSTFILES, DSTDIRS };
+  std::set<fs::path> dirAndFiles[4]; 
+
+  for (const auto& entry : fs::directory_iterator(srcDir))
+    splitFilesDirs(dirAndFiles[SRCDIRS], dirAndFiles[SRCFILES], entry.path());
+  for (const auto& entry : fs::directory_iterator(dstDir))
+    splitFilesDirs(dirAndFiles[DSTDIRS], dirAndFiles[DSTFILES], entry.path());
+
+  // When is on the root it must ignore the same directories and files
+  if (isRoot) {
+    const fs::path igDirs[] = { ".git" };  
+    std::set<fs::path> ignoreDirs(igDirs, igDirs + sizeof(igDirs) / sizeof(igDirs[0]));
+    const fs::path igFiles[] = { "README.md", ".story.md" };
+    std::set<fs::path> ignoreFiles(igFiles, igFiles + sizeof(igFiles) / sizeof(igFiles[0]));
+
+    for (int i = 0; i < sizeof(dirAndFiles) /sizeof(std::set<fs::path>); i++)
+      if (i % 2 == 0)
+        cleanIgnoreSet(dirAndFiles[i], ignoreFiles);
+      else
+        cleanIgnoreSet(dirAndFiles[i], ignoreDirs);
+  }
+
+  // Check if the same files has differences between them
+  std::set<fs::path> workSet;
+  setIntersection(dirAndFiles[SRCFILES], dirAndFiles[DSTFILES], workSet);
+  for (std::set<fs::path>::iterator it = workSet.begin();
+       workSet.end() != it; ++it) {
+    fs::path sFile(srcDir);
+    sFile /= *it;
+    fs::path dFile(dstDir);
+    dFile /= *it;
+
+    if (!diffFiles(sFile, dFile)) {
+      fs::copy(sFile, dFile, fs::copy_options::overwrite_existing);
+      // TODO git_add
+    }
+  }
+
+  // Which files are new on the src and doesn't exists on dst
+  setDifference(dirAndFiles[SRCFILES], dirAndFiles[DSTFILES], workSet);
+  for (std::set<fs::path>::iterator it = workSet.begin();
+       workSet.end() != it; ++it) {
+    fs::path sFile(srcDir);
+    sFile /= *it;
+    fs::path dFile(dstDir);
+    dFile /= *it;
+
+    fs::copy(sFile, dFile);
+    // TODO git_add
+  }
+
+  // Which files exists on dst but doesn't exists on src
+  setDifference(dirAndFiles[DSTFILES], dirAndFiles[SRCFILES], workSet);
+  for (std::set<fs::path>::iterator it = workSet.begin();
+       workSet.end() != it; ++it) {
+    fs::path sFile(srcDir);
+    sFile /= *it;
+    fs::remove(sFile);
+  }
+
+  // Which directories are newer and they must be created on dst
+  setDifference(dirAndFiles[SRCDIRS], dirAndFiles[DSTDIRS], workSet);
+  for (std::set<fs::path>::iterator it = workSet.begin();
+       workSet.end() != it; ++it) {
+    fs::path dDir(dstDir);
+    dDir /= *it;
+    fs::create_directory(dDir);
+  }
+
+  // Which directories doesn't exists on the new one
+  setDifference(dirAndFiles[DSTDIRS], dirAndFiles[SRCDIRS], workSet);
+  for (std::set<fs::path>::iterator it = workSet.begin();
+       workSet.end() != it; ++it) {
+    fs::path dDir(dstDir);
+    dDir /= *it;
+    
+    // TODO fs::remove_all(dDir);
+  }
+
+  // Recursive calling
+  for (std::set<fs::path>::iterator it = dirAndFiles[SRCDIRS].begin();
+       dirAndFiles[SRCDIRS].end() != it; ++it) {
+    fs::path sDir(srcDir);
+    sDir /= *it;
+    fs::path dDir(dstDir);
+    dDir /= *it;
+    diffDirAction(sDir,
+                  dDir,
+                  options);
+  }
 }

@@ -1,4 +1,5 @@
 #pragma once
+
 #include <filesystem>
 #include <iostream>
 #include <fstream>
@@ -56,6 +57,9 @@ void addFile2GitRepo(::git_repository *repo,
 void removeFile2GitRepo(::git_repository *repo,
                         const fs::path& filePath,
                         Options& options);
+void removeDir2GitRepo(::git_repository* repo,
+                       const char* dirName,
+                       Options& options);
 void moveFile2GitRepo(::git_repository *repo,
                       const fs::path& srcPath,
                       const fs::path& dstPath,
@@ -68,9 +72,13 @@ void m_giterror(int error,
                 Options options);
 int cloneGitRepo(fs::path& location,
                  std::string& url,
-		 RepoDesc* rd,
+                 RepoDesc* rd,
                  Options& options);
 int checkoutGitRepoFromName(::git_repository* repo,
-			    const std::string& tag,
-			    Options& options);
+                            const std::string& tag,
+                            Options& options);
 RepoDesc* url2RepoDesc(std::string& url);
+void diffDirAction(fs::path srcDir,
+                   fs::path dstDir,
+                   Options& options,
+                   bool isRoot = false);

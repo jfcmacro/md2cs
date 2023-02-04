@@ -102,8 +102,6 @@ processStoryFile(Options &options) {
   std::string currExtRepo;
   CheckoutType currCheckoutType { BRANCH };
   std::string currCheckoutName;
-  // std::string currExtBranch { DEFAULTBRANCH };
-  // std::string currExtTag;
   std::string message;
   std::map<std::string, RepoDesc*> extRepos;
 
@@ -192,17 +190,19 @@ processStoryFile(Options &options) {
         state = OUTCONFIG;
         if (pBuffer) (*pBuffer) << line << std::endl;
         if (!currCheckoutName.empty()) {
-          std::cout << (currCheckoutType == BRANCH ?"Branch":"Tag")
-		    << " to checkout: " << currCheckoutName
-		    << " from repo " << currExtRepo << std::endl;
-	  fs::path curDir { fs::current_path() };
-	  fs::current_path(extRepos[currExtRepo]->repoDir);
+          std::cout << (currCheckoutType == BRANCH ? "Branch" : "Tag")
+                    << " to checkout: " << currCheckoutName
+                    << " from repo " << currExtRepo << std::endl;
+          fs::path curDir { fs::current_path() };
+          fs::current_path(extRepos[currExtRepo]->repoDir);
           m_giterror(checkoutGitRepoFromName(extRepos[currExtRepo]->repo,
-					     currCheckoutName,
-					     options),
+                                             currCheckoutName,
+                                             options),
                      "Checkout failed",
                      options);
-	  fs::current_path(curDir);
+          // Checkout it is successfull
+          
+          fs::current_path(curDir);
           currCheckoutName.clear();
         }
         break;
@@ -244,7 +244,7 @@ processStoryFile(Options &options) {
 
           if (std::regex_match(line, cfg, cfg_regex)) {
             if (cfg[1] == "repository") {
-	      std::string currURLExtRepo;
+              std::string currURLExtRepo;
               currURLExtRepo = cfg[2];
               fs::path curDir { fs::current_path() };
               fs::current_path(targetReposPath);
@@ -258,34 +258,32 @@ processStoryFile(Options &options) {
                           << std::endl;
                 newRepo.clear();
                 newRepo = rd->repoName;
-                // delete rd;
-		rd->repoDir = fs::current_path() / newRepo;
-		rd->checkoutName = DEFAULTBRANCH;
-		rd->checkoutType = BRANCH;
-		currExtRepo = rd->repoName;
-		extRepos[currExtRepo] = rd;
+                rd->repoDir = fs::current_path() / newRepo;
+                rd->checkoutName = DEFAULTBRANCH;
+                rd->checkoutType = BRANCH;
+                currExtRepo = rd->repoName;
+                extRepos[currExtRepo] = rd;
               }
               else {
                 std::cerr << "Incorrect repo url"
                           << std::endl;
               }
-
               m_giterror(cloneGitRepo(newRepo,
                                       currURLExtRepo,
-				      rd,
+                                      rd,
                                       options),
                          "Clone failed",
                          options);
               fs::current_path(curDir);
             }
             if (cfg[1] == "branch") {
-	      currCheckoutType = BRANCH;
-	      currCheckoutName.clear();
+              currCheckoutType = BRANCH;
+              currCheckoutName.clear();
               currCheckoutName = cfg[2];
             }
             if (cfg[1] == "tag") {
-	      currCheckoutType = TAG;
-	      currCheckoutName.clear();
+              currCheckoutType = TAG;
+              currCheckoutName.clear();
               currCheckoutName = cfg[2];
             }
             if (cfg[1] == "focus") {
