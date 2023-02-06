@@ -200,7 +200,6 @@ processStoryFile(Options &options) {
                                              options),
                      "Checkout failed",
                      options);
-          // TODO add diffDirAction
 
           fs::current_path(curDir);
           diffDirAction(repo,

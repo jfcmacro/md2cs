@@ -60,7 +60,7 @@ void addFile2GitRepo(::git_repository *repo,
 void addPath2GitRepo(::git_repository *repo,
                      const fs::path& filePath,
                      Options& options);
-void removeFile2GitRepo(::git_repository *repo,
+void removePath2GitRepo(::git_repository *repo,
                         const fs::path& filePath,
                         Options& options);
 void removeDir2GitRepo(::git_repository* repo,

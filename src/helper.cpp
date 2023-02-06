@@ -97,7 +97,7 @@ addPath2GitRepo(::git_repository* repo,
   m_giterror(::git_index_write(index),
              "Index cannot be written",
              options);
-
+  
   ::git_index_free(index);
 }
 
@@ -118,6 +118,33 @@ removeFile2GitRepo(::git_repository* repo,
 
   m_giterror(::git_index_remove_bypath(index,
                                        filename),
+             error_msg.c_str(),
+             options);
+
+  m_giterror(::git_index_write(index),
+             "Index cannot be written",
+             options);
+
+  ::git_index_free(index);
+}
+
+void
+removePath2GitRepo(::git_repository* repo,
+                   const fs::path& path ,
+                   Options& options) {
+  ::git_index *index;
+
+  m_giterror(::git_repository_index(&index,
+                                    repo),
+             "Could not open repository index",
+             options);
+
+  std::string error_msg { "File: " };
+  error_msg += path;
+  error_msg += " cannot be remove";
+
+  m_giterror(::git_index_remove_bypath(index,
+                                       path.c_str()),
              error_msg.c_str(),
              options);
 
@@ -859,13 +886,19 @@ diffDirAction(::git_repository* repo,
     addPath2GitRepo(repo, dRelPath, options);
   }
 
+  // TODO Important Check the semantic of this operation, I guess it is
+  // wrong.
   // Which files exists on dst but doesn't exists on src
   setDifference(dirAndFiles[DSTFILES], dirAndFiles[SRCFILES], workSet);
   for (std::set<fs::path>::iterator it = workSet.begin();
        workSet.end() != it; ++it) {
-    fs::path sFile(srcDir);
-    sFile /= *it;
-    fs::remove(sFile);
+    fs::path dFile(dstDir);
+    dFile /= *it;
+    fs::path dRelPath;
+    fs::path currDir { fs::current_path() };
+    getRelativePathFrom(dFile, currDir, dRelPath);
+    removePath2GitRepo(repo, dRelPath, options);
+    fs::remove(dFile);
   }
 
   // Which directories are newer and they must be created on dst
@@ -883,8 +916,11 @@ diffDirAction(::git_repository* repo,
        workSet.end() != it; ++it) {
     fs::path dDir(dstDir);
     dDir /= *it;
-
-    // TODO fs::remove_all(dDir);
+    fs::path dRelPath;
+    fs::path currDir { fs::current_path() };
+    getRelativePathFrom(dDir, currDir, dRelPath);
+    removeDir2GitRepo(repo, dRelPath.c_str(), options);
+    fs::remove_all(dDir);
   }
 
   // Recursive calling
