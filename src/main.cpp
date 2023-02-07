@@ -292,6 +292,17 @@ processStoryFile(Options &options) {
             if (cfg[1] == "focus") {
               if (pBuffer) (*pBuffer) << line << std::endl;
             }
+	    if (cfg[1] == "origin") {
+	      ::git_remote *remote = nullptr;
+	      std::string url { cfg[2] };
+	      m_giterror(::git_remote_create(&remote,
+					     repo,
+					     "origin",
+					     url.c_str()),
+			 "Creating remote entry",
+			 options);;
+				  
+	    }
           }
         }
         break;
