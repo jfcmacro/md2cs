@@ -796,9 +796,10 @@ diffFiles(fs::path file1,
   return buffer1 == buffer2;
 }
 
-void getRelativePathFrom(const fs::path& firstPath,
-                         const fs::path& secondPath,
-                         fs::path& result) {
+void
+getRelativePathFrom(const fs::path& firstPath,
+		    const fs::path& secondPath,
+		    fs::path& result) {
 
   int distFirstPath = std::distance(firstPath.begin(),
                                     firstPath.end());
@@ -821,6 +822,12 @@ void getRelativePathFrom(const fs::path& firstPath,
   result.clear();
   for (; itl != longPath->end(); ++itl)
     result /= *itl;
+}
+
+void
+getRelativePathFromCurrDir(const fs::path& path,
+			   fs::path& result) {
+  getRelativePathFrom(path, fs::current_path(), result);
 }
 
 void
@@ -851,7 +858,7 @@ diffDirAction(::git_repository* repo,
         cleanIgnoreSet(dirAndFiles[i], ignoreDirs);
   }
 
-  // Check if the same files has differences between them
+  // Check if the same named files has internal differences between them
   std::set<fs::path> workSet;
   setIntersection(dirAndFiles[SRCFILES], dirAndFiles[DSTFILES], workSet);
   for (std::set<fs::path>::iterator it = workSet.begin();
@@ -864,8 +871,9 @@ diffDirAction(::git_repository* repo,
     if (!diffFiles(sFile, dFile)) {
       fs::copy(sFile, dFile, fs::copy_options::overwrite_existing);
       fs::path dRelPath;
-      fs::path currDir { fs::current_path() };
-      getRelativePathFrom(dFile, currDir, dRelPath);
+      // fs::path currDir { fs::current_path() };
+      // getRelativePathFrom(dFile, currDir, dRelPath);
+      getRelativePathFromCurrDir(dFile, dRelPath);
       addPath2GitRepo(repo, dRelPath, options);
     }
   }
@@ -881,8 +889,7 @@ diffDirAction(::git_repository* repo,
 
     fs::copy(sFile, dFile);
     fs::path dRelPath;
-    fs::path currDir { fs::current_path() };
-    getRelativePathFrom(dFile, currDir, dRelPath);
+    getRelativePathFromCurrDir(dFile, dRelPath);
     addPath2GitRepo(repo, dRelPath, options);
   }
 
@@ -895,8 +902,7 @@ diffDirAction(::git_repository* repo,
     fs::path dFile(dstDir);
     dFile /= *it;
     fs::path dRelPath;
-    fs::path currDir { fs::current_path() };
-    getRelativePathFrom(dFile, currDir, dRelPath);
+    getRelativePathFromCurrDir(dFile, dRelPath);
     removePath2GitRepo(repo, dRelPath, options);
     fs::remove(dFile);
   }
@@ -917,8 +923,7 @@ diffDirAction(::git_repository* repo,
     fs::path dDir(dstDir);
     dDir /= *it;
     fs::path dRelPath;
-    fs::path currDir { fs::current_path() };
-    getRelativePathFrom(dDir, currDir, dRelPath);
+    getRelativePathFromCurrDir(dDir, dRelPath);
     removeDir2GitRepo(repo, dRelPath.c_str(), options);
     fs::remove_all(dDir);
   }
