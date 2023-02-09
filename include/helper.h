@@ -13,8 +13,9 @@ namespace fs = std::filesystem;
 
 struct Options {
   bool debug;
+  int pagesProcessed;
   fs::path targetPath;
-  Options() : debug(false), targetPath() { }
+  Options() : debug(false), targetPath(), pagesProcessed(-1) { }
 };
 
 enum CheckoutType { BRANCH, TAG };
@@ -90,3 +91,6 @@ void diffDirAction(::git_repository* repo,
                    fs::path dstDir,
                    Options& options,
                    bool isRoot = false);
+void stopProcessing(int pagesProcessed,
+                    int commitDone,
+                    Options& options);

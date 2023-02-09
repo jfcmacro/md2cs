@@ -40,7 +40,7 @@ static void usage(const char* progname,
             << "-h | --help"
             << std::endl;
   std::cerr << progname
-            << "[-g]"
+            << "[-d] [[-p] <number-pages-process>|[--number-pages-process]]"
             << std::endl;
   ::exit(status);
 }
@@ -61,11 +61,12 @@ main(int argc, char *argv[]) {
     static struct option long_options[] = {
       {"version", no_argument,       0,  'v'},
       {"help",    no_argument,       0,  'h'},
+      {"number-pages-process", required_argument, 0, 'n'},
       {0,         0,                 0,  0 }
     };
 
     c = ::getopt_long(argc, argv,
-                      "dhv",
+                      "dhvn:",
                       long_options,
                       &option_index);
     if (c == -1)
@@ -82,6 +83,13 @@ main(int argc, char *argv[]) {
 
     case 'h':
       usage(progname, EXIT_SUCCESS);
+      break;
+
+    case 'n':
+      {
+        std::string n { optarg };
+        options.pagesProcessed = std::stoi(n);
+      }
       break;
 
     case '?':
@@ -234,6 +242,13 @@ processStoryFile(Options &options) {
                             message,
                             options);
             }
+
+            if (pagesProcessed == options.pagesProcessed) {
+              stopProcessing(pagesProcessed,
+                             commitDone,
+                             options);
+              return;
+            }
           }
         }
         break;
@@ -344,14 +359,9 @@ processStoryFile(Options &options) {
                   options);
   }
 
-  int error;
-  while ((error = ::git_libgit2_shutdown()) != 0) {
-    if (error < GIT_OK)
-      m_giterror(error, "Libgit2 shutdown has failed", options);
-  }
-
-  std::cout << "Pages processed: " << pagesProcessed << std::endl;
-  std::cout << "Commit done: " << commitDone << std::endl;
+  stopProcessing(pagesProcessed,
+                 commitDone,
+                 options);
 }
 
 inline const char* getOutputFilename(bool isReadme) {

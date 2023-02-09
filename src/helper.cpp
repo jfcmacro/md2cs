@@ -958,3 +958,15 @@ diffDirAction(::git_repository* repo,
                   options);
   }
 }
+
+void
+stopProcessing(int pagesProcessed, int commitDone, Options& options) {
+  int error;
+  while ((error = ::git_libgit2_shutdown()) != 0) {
+    if (error < GIT_OK)
+      m_giterror(error, "Libgit2 shutdown has failed", options);
+  }
+
+  std::cout << "Pages processed: " << pagesProcessed << std::endl;
+  std::cout << "Commit done: " << commitDone << std::endl;
+}
