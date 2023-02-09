@@ -6,6 +6,23 @@
 #include <iterator>
 #include <string.h>
 
+std::string transTex2HTMLEntity(const std::string& input) {
+  std::ostringstream oss;
+
+  for (int i = 0; i < input.size(); i++) {
+    switch (input[i]) {
+    case '<' : oss << "&lt;"; break;
+    case '>' : oss << "&gt;"; break;
+    case '&' : oss << "&amp;"; break;
+    case '"' : oss << "&quot;"; break;
+    case '\'' : oss << "&apos;"; break;
+    default : oss << input[i]; break;
+    }
+  }
+
+  return oss.str();
+}
+
 void
 addBuffer2GitRepo(::git_repository* repo,
                   std::ostringstream* pBuffer,
@@ -97,7 +114,7 @@ addPath2GitRepo(::git_repository* repo,
   m_giterror(::git_index_write(index),
              "Index cannot be written",
              options);
-  
+
   ::git_index_free(index);
 }
 
@@ -798,8 +815,8 @@ diffFiles(fs::path file1,
 
 void
 getRelativePathFrom(const fs::path& firstPath,
-		    const fs::path& secondPath,
-		    fs::path& result) {
+                    const fs::path& secondPath,
+                    fs::path& result) {
 
   int distFirstPath = std::distance(firstPath.begin(),
                                     firstPath.end());
@@ -826,7 +843,7 @@ getRelativePathFrom(const fs::path& firstPath,
 
 void
 getRelativePathFromCurrDir(const fs::path& path,
-			   fs::path& result) {
+                           fs::path& result) {
   getRelativePathFrom(path, fs::current_path(), result);
 }
 
@@ -924,8 +941,8 @@ diffDirAction(::git_repository* repo,
     dDir /= *it;
     fs::path dRelPath;
     getRelativePathFromCurrDir(dDir, dRelPath);
+    std::cout << "Removing directory: " << dDir << std::endl;
     removeDir2GitRepo(repo, dRelPath.c_str(), options);
-    fs::remove_all(dDir);
   }
 
   // Recursive calling

@@ -188,7 +188,8 @@ processStoryFile(Options &options) {
       switch(state) {
       case INCONFIG:
         state = OUTCONFIG;
-        if (pBuffer) (*pBuffer) << line << std::endl;
+        if (pBuffer)
+          (*pBuffer) << transTex2HTMLEntity(line) << std::endl;
         if (!currCheckoutName.empty()) {
           std::cout << (currCheckoutType == BRANCH ? "Branch" : "Tag")
                     << " to checkout: " << currCheckoutName
@@ -221,7 +222,8 @@ processStoryFile(Options &options) {
                               options);
             delete pBuffer;
             pBuffer = new std::ostringstream();
-            if (pBuffer) (*pBuffer) << line << std::endl;
+            if (pBuffer)
+              (*pBuffer) << transTex2HTMLEntity(line) << std::endl;
 
             if (firstPage) {
               firstPage = false;
@@ -290,19 +292,20 @@ processStoryFile(Options &options) {
               currCheckoutName = cfg[2];
             }
             if (cfg[1] == "focus") {
-              if (pBuffer) (*pBuffer) << line << std::endl;
+              if (pBuffer)
+                (*pBuffer) << transTex2HTMLEntity(line) << std::endl;
             }
-	    if (cfg[1] == "origin") {
-	      ::git_remote *remote = nullptr;
-	      std::string url { cfg[2] };
-	      m_giterror(::git_remote_create(&remote,
-					     repo,
-					     "origin",
-					     url.c_str()),
-			 "Creating remote entry",
-			 options);;
-				  
-	    }
+            if (cfg[1] == "origin") {
+              ::git_remote *remote = nullptr;
+              std::string url { cfg[2] };
+              m_giterror(::git_remote_create(&remote,
+                                             repo,
+                                             "origin",
+                                             url.c_str()),
+                         "Creating remote entry",
+                         options);;
+
+            }
           }
         }
         break;
@@ -314,13 +317,15 @@ processStoryFile(Options &options) {
           message = cfg[1];
         }
 
-        if (pBuffer) (*pBuffer) << line << std::endl;
+        if (pBuffer)
+          (*pBuffer) << transTex2HTMLEntity(line) << std::endl;
         break;
       }
     }
   }
 
-  if (pBuffer) (*pBuffer) << line << std::endl;
+  if (pBuffer)
+    (*pBuffer) << transTex2HTMLEntity(line) << std::endl;
 
   pagesProcessed++;
   addBuffer2GitRepo(repo,

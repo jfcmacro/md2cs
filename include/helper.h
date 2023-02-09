@@ -44,6 +44,7 @@ struct RepoDesc {
 };
 
 void processStoryFile(Options& options);
+std::string transTex2HTMLEntity(const std::string& input);
 void addBuffer2GitRepo(::git_repository* repo,
                        std::ostringstream* pBuffer,
                        const char* filename,
