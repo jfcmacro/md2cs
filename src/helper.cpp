@@ -941,7 +941,6 @@ diffDirAction(::git_repository* repo,
     dDir /= *it;
     fs::path dRelPath;
     getRelativePathFromCurrDir(dDir, dRelPath);
-    std::cout << "Removing directory: " << dDir << std::endl;
     removeDir2GitRepo(repo, dRelPath.c_str(), options);
   }
 
