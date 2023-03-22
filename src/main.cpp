@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <string>
+#include <cstring>
 #include <filesystem>
 #include <getopt.h>
 #include <git2.h>
@@ -34,13 +35,13 @@ static void usage(const char* progname,
                   int status) {
   std::cerr << "usage: " << std::endl
             << progname
-            << "-v | --version"
+            << " -v | --version"
             << std::endl;
   std::cerr << progname
-            << "-h | --help"
+            << " -h | --help"
             << std::endl;
   std::cerr << progname
-            << "[-d] [[-p] <number-pages-process>|[--number-pages-process]]"
+            << " [-d] [[-p] <number-pages-process>|[--number-pages-process] <numbe-pages-process>] [-u]"
             << std::endl;
   ::exit(status);
 }
@@ -59,6 +60,7 @@ main(int argc, char *argv[]) {
     int option_index = 0;
 
     static struct option long_options[] = {
+      {"upload",  no_argument,       0,  'u'},
       {"version", no_argument,       0,  'v'},
       {"help",    no_argument,       0,  'h'},
       {"number-pages-process", required_argument, 0, 'n'},
@@ -66,7 +68,7 @@ main(int argc, char *argv[]) {
     };
 
     c = ::getopt_long(argc, argv,
-                      "dhvn:",
+                      "dhvn:u",
                       long_options,
                       &option_index);
     if (c == -1)
@@ -90,6 +92,10 @@ main(int argc, char *argv[]) {
         std::string n { optarg };
         options.pagesProcessed = std::stoi(n);
       }
+      break;
+
+    case 'u':
+      options.upload = true;
       break;
 
     case '?':
@@ -357,6 +363,27 @@ processStoryFile(Options &options) {
     commitGitRepo(repo,
                   message,
                   options);
+  }
+
+  // ::git_reference *ref = nullptr;
+  // m_giterror(::git_branch_lookup(&ref, repo, "main", GIT_BRANCH_LOCAL),
+  //            "getting local branch main", options);
+
+  // ::git_reference *ref_rem = nullptr;
+  // m_giterror(::git_branch_upstream(&ref_rem, ref),
+  //            "branch upstream", options);
+
+  // m_giterror(::git_branch_set_upstream(ref, "main"),
+  //            "setting set upstream", options);
+
+  // m_giterror(::git_remote_add_push(repo,
+  //                                  "origin",
+  //                                  "refs/heads/main"),
+  //            "setting remote add push", options);
+
+  if (options.upload) {
+    m_giterror(pushGitRepo(repo, options),
+               "Error pushing", options);
   }
 
   stopProcessing(pagesProcessed,

@@ -12,10 +12,11 @@
 namespace fs = std::filesystem;
 
 struct Options {
+  bool upload;
   bool debug;
   int pagesProcessed;
   fs::path targetPath;
-  Options() : debug(false), targetPath(), pagesProcessed(-1) { }
+  Options() : upload(false), debug(false), targetPath(), pagesProcessed(-1) { }
 };
 
 enum CheckoutType { BRANCH, TAG };
@@ -85,6 +86,8 @@ int cloneGitRepo(fs::path& location,
 int checkoutGitRepoFromName(::git_repository* repo,
                             const std::string& tag,
                             Options& options);
+int pushGitRepo(::git_repository* repo,
+                Options& options);
 RepoDesc* url2RepoDesc(std::string& url);
 void diffDirAction(::git_repository* repo,
                    fs::path srcDir,

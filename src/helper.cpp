@@ -410,6 +410,15 @@ checkoutProgress(const char* path,
 }
 
 static int
+credPassThrough(::git_credential **out,
+                const char *url,
+                const char *userNameURL,
+                unsigned int allowed_types,
+                void *payload) {
+  return GIT_PASSTHROUGH;
+}
+
+static int
 credAcquireCb(::git_credential **out,
               const char *url,
               const char *userNameURL,
@@ -435,7 +444,7 @@ credAcquireCb(::git_credential **out,
     switch (credentialTypes[nextTypeToTry]) {
     case GIT_CREDENTIAL_SSH_KEY:
       if (allowed_types & credentialTypes[nextTypeToTry]) {
-        fs::path privKey { "/home/juancardona/.ssh/id_rsa" };
+        fs::path privKey { "/home/juancardona/.ssh/id_ed25519" };
         fs::path pubKey  { privKey };
         pubKey.replace_extension(".pub");
 
@@ -527,6 +536,41 @@ cloneGitRepo(fs::path& location,
   // }
   return error;
 }
+
+int
+pushGitRepo(::git_repository* repo,
+            Options& options) {
+  ::git_push_options d_git_push_options;
+  ::git_remote* remote = nullptr;
+  const char* REFSPEC = "refs/heads/main";
+  char* ref_spec = new char[::strlen(REFSPEC) + 1];
+  ::strcpy(ref_spec, REFSPEC);
+  const git_strarray refspecs = {
+    &ref_spec,
+    1
+  };
+  ProgressData pd = { {0} };
+
+  std::cout << "Ready to push" << std::endl;
+  int i_i;
+  std::cin >> i_i;
+
+  m_giterror(::git_remote_lookup(&remote, repo, "origin"),
+             "Unable to lookup remote", options);
+  m_giterror(::git_push_options_init(&d_git_push_options,
+                                     GIT_PUSH_OPTIONS_VERSION),
+             "Error initializing push", options);
+  
+  d_git_push_options.callbacks.sideband_progress = sidebandProgress;
+  d_git_push_options.callbacks.transfer_progress = &fetchProgress;
+  d_git_push_options.callbacks.credentials = credAcquireCb;
+  d_git_push_options.callbacks.payload = &pd;
+
+  return ::git_remote_push(remote,
+                           &refspecs,
+                           &d_git_push_options);
+}
+
 
 RepoDesc*
 url2RepoDesc(std::string& url) {
