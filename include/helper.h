@@ -87,7 +87,9 @@ int checkoutGitRepoFromName(::git_repository* repo,
                             const std::string& tag,
                             Options& options);
 int pushGitRepo(::git_repository* repo,
-                Options& options);
+                Options& options,
+                const char* refSpec,
+                bool force = false);
 RepoDesc* url2RepoDesc(std::string& url);
 void diffDirAction(::git_repository* repo,
                    fs::path srcDir,
@@ -97,3 +99,5 @@ void diffDirAction(::git_repository* repo,
 void stopProcessing(int pagesProcessed,
                     int commitDone,
                     Options& options);
+::git_repository* initLocalRepository(fs::path& repoPath,
+                                      Options& options);

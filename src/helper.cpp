@@ -6,7 +6,8 @@
 #include <iterator>
 #include <string.h>
 
-std::string transTex2HTMLEntity(const std::string& input) {
+std::string
+transTex2HTMLEntity(const std::string& input) {
   std::ostringstream oss;
 
   for (int i = 0; i < input.size(); i++) {
@@ -511,7 +512,8 @@ cloneGitRepo(fs::path& location,
   cloneOpts.fetch_opts.callbacks.payload = &pd;
 
   std::cout << "Cloning: " << url << " at " << location << std::endl;
-  error = git_clone(&rd->repo, url.c_str(), location.c_str(), nullptr); // &cloneOpts);
+  error = git_clone(&rd->repo, url.c_str(), location.c_str(), nullptr);
+  // &cloneOpts);
   std::cout << std::endl;
 
   if (error != 0) {
@@ -537,30 +539,39 @@ cloneGitRepo(fs::path& location,
   return error;
 }
 
+static
+char* getRefSpec(const char* refSpec, bool force) {
+  size_t size = ::strlen(refSpec);
+  char* ref_spec = new char[size * (force ? 1 : 2) + 1 + (force ? 0 : 2)];
+  if (force) ::strcpy(ref_spec, "+");
+  ::strcpy(ref_spec, refSpec);
+  if (force) ::strcpy(::strcpy(ref_spec, ":"), refSpec);
+  return ref_spec;
+}
+
 int
 pushGitRepo(::git_repository* repo,
-            Options& options) {
+            Options& options,
+            const char* refSpec,
+            bool force) {
   ::git_push_options d_git_push_options;
   ::git_remote* remote = nullptr;
-  const char* REFSPEC = "refs/heads/main";
-  char* ref_spec = new char[::strlen(REFSPEC) + 1];
-  ::strcpy(ref_spec, REFSPEC);
+  // const char* refSpec = "refs/heads/main";
+  // char* ref_spec = new char[::strlen(refSpec) + 1];
+  // ::strcpy(ref_spec, refSpec);
+  char* ref_spec = getRefSpec(refSpec, force);
   const git_strarray refspecs = {
     &ref_spec,
     1
   };
   ProgressData pd = { {0} };
 
-  std::cout << "Ready to push" << std::endl;
-  int i_i;
-  std::cin >> i_i;
-
   m_giterror(::git_remote_lookup(&remote, repo, "origin"),
              "Unable to lookup remote", options);
   m_giterror(::git_push_options_init(&d_git_push_options,
                                      GIT_PUSH_OPTIONS_VERSION),
              "Error initializing push", options);
-  
+
   d_git_push_options.callbacks.sideband_progress = sidebandProgress;
   d_git_push_options.callbacks.transfer_progress = &fetchProgress;
   d_git_push_options.callbacks.credentials = credAcquireCb;
@@ -576,7 +587,7 @@ RepoDesc*
 url2RepoDesc(std::string& url) {
   RepoDesc *retValue = nullptr;
 
-  const std::regex line_regex("(https)://(.*)/(.*)/(.*)\\.git");
+  std::regex line_regex { "(https)://(.*)/(.*)/(.*)\\.git" };
   std::smatch repoInfo;
 
   if (std::regex_match(url,repoInfo,line_regex)) {
@@ -584,6 +595,15 @@ url2RepoDesc(std::string& url) {
                             repoInfo[2],
                             repoInfo[3],
                             repoInfo[4]);
+  }
+  else {
+    line_regex = "(git)://(.*)/~(.*)/(.*)\\.git";
+    if (std::regex_match(url, repoInfo, line_regex)) {
+      retValue = new RepoDesc(repoInfo[1],
+                              repoInfo[2],
+                              repoInfo[3],
+                              repoInfo[4]);
+    }
   }
 
   return retValue;
@@ -636,7 +656,9 @@ getAnnotatedCommitFromGuessingName(::git_annotated_commit** commit,
 
     refname << "ref/remotes/" << remotes.strings[i] << "/" << name;
 
-    if ((error = ::git_reference_lookup(&remote_ref, repo, refname.str().c_str())) < GIT_OK)
+    if ((error = ::git_reference_lookup(&remote_ref,
+                                        repo,
+                                        refname.str().c_str())) < GIT_OK)
       if (error < 0 and error != GIT_ENOTFOUND) break;
 
     break;
@@ -677,7 +699,9 @@ performCheckoutRef(::git_repository *repo,
   //   checkout_opts.perfdata_cb = print_perf_data;
 
   /** Grab the commit we're interested to move to */
-  error = ::git_commit_lookup(&target_commit, repo, git_annotated_commit_id(target));
+  error = ::git_commit_lookup(&target_commit,
+                              repo,
+                              git_annotated_commit_id(target));
 
   if (error != GIT_OK) {
     std::cerr << "Failed to lookup commit: "
@@ -696,7 +720,9 @@ performCheckoutRef(::git_repository *repo,
    * Note that it's okay to pass a git_commit here, because it will be
    * peeled to a tree.
    */
-  error = ::git_checkout_tree(repo, (const git_object *)target_commit, &checkout_opts);
+  error = ::git_checkout_tree(repo,
+                              (const git_object *)target_commit,
+                              &checkout_opts);
 
   if (error != GIT_OK) {
     std::cerr << "failed to checkout tree: "
@@ -732,7 +758,10 @@ performCheckoutRef(::git_repository *repo,
     }
 
     if (::git_reference_is_remote(ref)) {
-      if ((error = ::git_branch_create_from_annotated(&branch, repo, target_ref.c_str(), target, 0)) < 0) {
+      if ((error = ::git_branch_create_from_annotated(&branch,
+                                                      repo,
+                                                      target_ref.c_str(),
+                                                      target, 0)) < 0) {
         std::cerr << "failed to update HEAD reference: "
                   << ::git_error_last()->message << std::endl;
         ::git_commit_free(target_commit);
@@ -770,8 +799,13 @@ checkoutGitRepoFromName(::git_repository* repo,
   ::git_annotated_commit *commit;
   int error;
 
-  if ((error = getAnnotatedCommitFromName(&commit, repo, name) < GIT_OK) and
-      (error = getAnnotatedCommitFromGuessingName(&commit, repo, name) < GIT_OK)) {
+  if ((error = getAnnotatedCommitFromName(&commit,
+                                          repo,
+                                          name) < GIT_OK)
+      and
+      (error = getAnnotatedCommitFromGuessingName(&commit,
+                                                  repo,
+                                                  name) < GIT_OK)) {
     std::cerr << "Failed to resolve " << name << ": "
               << ::git_error_last()->message << std::endl;
     return error;
@@ -908,9 +942,13 @@ diffDirAction(::git_repository* repo,
   // When is on the root it must ignore the same directories and files
   if (isRoot) {
     const fs::path igDirs[] = { ".git" };
-    std::set<fs::path> ignoreDirs(igDirs, igDirs + sizeof(igDirs) / sizeof(igDirs[0]));
+    std::set<fs::path> ignoreDirs(igDirs,
+                                  igDirs +
+                                  sizeof(igDirs) / sizeof(igDirs[0]));
     const fs::path igFiles[] = { "README.md", ".story.md" };
-    std::set<fs::path> ignoreFiles(igFiles, igFiles + sizeof(igFiles) / sizeof(igFiles[0]));
+    std::set<fs::path> ignoreFiles(igFiles,
+                                   igFiles +
+                                   sizeof(igFiles) / sizeof(igFiles[0]));
 
     for (int i = 0; i < sizeof(dirAndFiles) /sizeof(std::set<fs::path>); i++)
       if (i % 2 == 0)
@@ -1012,4 +1050,144 @@ stopProcessing(int pagesProcessed, int commitDone, Options& options) {
 
   std::cout << "Pages processed: " << pagesProcessed << std::endl;
   std::cout << "Commit done: " << commitDone << std::endl;
+}
+
+::git_commit*
+getFirstCommitOid(::git_repository* repo, Options& options) {
+  ::git_oid oid;
+  ::git_revwalk *walker = nullptr;
+
+  m_giterror(::git_revwalk_new(&walker, repo),
+             "Couldn't create revision walker",
+             options);
+
+  m_giterror(::git_revwalk_push_head(walker),
+             "Couldn't find revision HEAD",
+             options);
+
+  ::git_commit* firstCommit = nullptr;
+  ::git_commit *commit = nullptr;
+
+  for (; !::git_revwalk_next(&oid, walker); ::git_commit_free(commit)) {
+
+    m_giterror(::git_commit_lookup(&commit, repo, &oid),
+               "Failed to look up commit",
+               options);
+
+    if (firstCommit)
+      ::git_commit_free(firstCommit);
+
+    ::git_commit_dup(&firstCommit, commit);
+  }
+
+  return firstCommit;
+}
+
+void
+commitAmendGitRepo(::git_repository* repo,
+                   std::string& message,
+                   Options& options) {
+  ::git_config *config_default;
+
+  m_giterror(::git_config_open_default(&config_default),
+             "Cannot open default configuration",
+             options);
+
+  ::git_config_entry *entry;
+  m_giterror(::git_config_get_entry(&entry,
+                                    config_default,
+                                    "user.name"),
+             "Cannot find user name at default config",
+             options);
+  std::string userName { entry->value };
+  ::git_config_entry_free(entry);
+
+  m_giterror(::git_config_get_entry(&entry,
+                                    config_default,"user.email"),
+             "Cannot find user email at default config",
+             options);
+  std::string userEmail { entry->value };
+  ::git_config_entry_free(entry);
+
+  ::git_signature *signature = nullptr;
+
+  m_giterror(::git_signature_now(&signature,
+                                 userName.c_str(),
+                                 userEmail.c_str()),
+             "Cannot create user signature",
+             options);
+  ::git_index *index;
+  ::git_tree* tree = nullptr;
+  ::git_oid tree_oid;
+  ::git_reference* ref = nullptr;
+  ::git_object* parent = nullptr;
+
+  int error;
+  if ((error = ::git_revparse_ext(&parent,
+                                  &ref,
+                                  repo,
+                                  "HEAD")) != GIT_ENOTFOUND) {
+
+    m_giterror(error,
+               "Error getting parent and reference",
+               options);
+  }
+
+  m_giterror(::git_repository_index(&index,
+                                    repo),
+             "Could not open repository index",
+             options);
+
+  m_giterror(::git_index_write_tree(&tree_oid,
+                                    index),
+             "Could not write tree",
+             options);
+  m_giterror(::git_index_write(index),
+             "Could not write index",
+             options);
+  ::git_tree_lookup(&tree,
+                    repo,
+                    &tree_oid);
+
+  ::git_oid new_commit_id;
+
+  m_giterror(::git_commit_create_v(&new_commit_id,
+                                   repo,
+                                   "HEAD",
+                                   signature,
+                                   signature,
+                                   "UTF-8",
+                                   message.c_str(),
+                                   tree,
+                                   parent ? 1 : 0,
+                                   parent),
+             "Error creating commit",
+             options);
+
+  ::git_index_free(index);
+  ::git_tree_free(tree);
+  ::git_object_free(parent);
+  ::git_reference_free(ref);
+}
+
+::git_repository*
+initLocalRepository(fs::path& repoPath,
+                    Options& options) {
+  std::string error_msg { "Repo: " };
+  error_msg += repoPath;
+  error_msg += " cannot be initialize";
+
+  ::git_repository* repo = nullptr;
+  m_giterror(::git_repository_init(&repo,
+                                   repoPath.c_str(),
+                                   false),
+             error_msg.c_str(),
+             options);
+
+  ::git_index *idx = nullptr;
+  m_giterror(::git_repository_index(&idx, repo),
+             "Repo Index cannot be obtained",
+             options);
+
+  return repo;
 }

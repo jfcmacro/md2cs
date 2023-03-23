@@ -121,8 +121,6 @@ processStoryFile(Options &options) {
 
   fs::path storyDir { fs::current_path() };
 
-  ::git_repository *repo = nullptr;
-
   fs::path storyFile = { fs::current_path() /
                          STORYFILENAME };
 
@@ -157,17 +155,20 @@ processStoryFile(Options &options) {
   std::string error_msg { "Repo: " };
   error_msg += targetRepoPath;
   error_msg += " cannot be initialize";
-  m_giterror(::git_repository_init(&repo,
-                                   targetRepoPath.c_str(),
-                                   false),
-             error_msg.c_str(),
-             options);
 
-  ::git_index *idx = nullptr;
-  m_giterror(::git_repository_index(&idx, repo),
-             "Repo Index cannot be obtained",
-             options);
+  // // TODO UPDATE: This must be changed 
+  // m_giterror(::git_repository_init(&repo,
+  //                                  targetRepoPath.c_str(),
+  //                                  false),
+  //            error_msg.c_str(),
+  //            options);
 
+  // ::git_index *idx = nullptr;
+  // m_giterror(::git_repository_index(&idx, repo),
+  //            "Repo Index cannot be obtained",
+  //            options);
+  ::git_repository *repo = initLocalRepository(targetRepoPath, options);
+  
   std::ifstream input(storyFile);
 
   if (!input) {
@@ -365,24 +366,8 @@ processStoryFile(Options &options) {
                   options);
   }
 
-  // ::git_reference *ref = nullptr;
-  // m_giterror(::git_branch_lookup(&ref, repo, "main", GIT_BRANCH_LOCAL),
-  //            "getting local branch main", options);
-
-  // ::git_reference *ref_rem = nullptr;
-  // m_giterror(::git_branch_upstream(&ref_rem, ref),
-  //            "branch upstream", options);
-
-  // m_giterror(::git_branch_set_upstream(ref, "main"),
-  //            "setting set upstream", options);
-
-  // m_giterror(::git_remote_add_push(repo,
-  //                                  "origin",
-  //                                  "refs/heads/main"),
-  //            "setting remote add push", options);
-
   if (options.upload) {
-    m_giterror(pushGitRepo(repo, options),
+    m_giterror(pushGitRepo(repo, options, "refs/heads/main"),
                "Error pushing", options);
   }
 
