@@ -4,7 +4,36 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <list>
+#include <utility>
+#include <termios.h>
+#include <unistd.h>
 #include <string.h>
+
+struct ProgressData {
+  ::git_indexer_progress fetch_progress;
+  size_t completed_steps;
+  size_t total_steps;
+  const char *path;
+};
+
+const static int MAX_RETRIES        { 5 };
+const static char* USER_ENV         { "USER" };
+const static std::string HTTP_REGEX { "(https)://(.*)/(.*)/(.*)\\.git" };
+const static std::string GIT_REGEX  { "(git)@(.*):(.*)/(.*)\\.git" };
+
+static void
+setStdinEcho(bool enable = true) {
+  struct termios tty;
+  tcgetattr(STDIN_FILENO, &tty);
+
+  if (!enable)
+    tty.c_lflag &= ~ECHO;
+  else
+    tty.c_lflag |= ECHO;
+
+  (void) tcsetattr(STDIN_FILENO, TCSANOW, &tty);
+}
 
 std::string
 transTex2HTMLEntity(const std::string& input) {
@@ -213,7 +242,8 @@ void m_giterror(int error,
 
   if (error < GIT_OK) {
     const ::git_error *g_error = ::git_error_last();
-    std::cout << msg
+
+    std::cerr << msg
               << " due ("
               << error
               << ") "
@@ -221,8 +251,10 @@ void m_giterror(int error,
               << " "
               << g_error->message
               << std::endl;
+
     if (!options.debug)
       fs::remove_all(options.targetPath);
+
     ::exit(EXIT_FAILURE);
   }
 }
@@ -260,6 +292,7 @@ commitGitRepo(::git_repository* repo,
                                  userEmail.c_str()),
              "Cannot create user signature",
              options);
+
   ::git_index *index;
   ::git_tree* tree = nullptr;
   ::git_oid tree_oid;
@@ -286,9 +319,11 @@ commitGitRepo(::git_repository* repo,
                                     index),
              "Could not write tree",
              options);
+
   m_giterror(::git_index_write(index),
              "Could not write index",
              options);
+
   ::git_tree_lookup(&tree,
                     repo,
                     &tree_oid);
@@ -314,13 +349,6 @@ commitGitRepo(::git_repository* repo,
   ::git_reference_free(ref);
 }
 
-struct ProgressData {
-  ::git_indexer_progress fetch_progress;
-  size_t completed_steps;
-  size_t total_steps;
-  const char *path;
-};
-
 static void
 printProgress(const ProgressData *pd)
 {
@@ -344,6 +372,7 @@ printProgress(const ProgressData *pd)
               <<  static_cast<unsigned int>(pd->fetch_progress.total_deltas)
               << std::endl;
   } else {
+    // TODO Rewrite this output
     // printf("net %3d%% (%4" PRIuZ " kb, %5u/%5u)  /  idx %3d%% (%5u/%5u)  /  chk %3d%% (%4" PRIuZ "/%4" PRIuZ")%s\n",
     //        network_percent, kbytes,
     //        pd->fetch_progress.received_objects, pd->fetch_progress.total_objects,
@@ -419,20 +448,40 @@ credPassThrough(::git_credential **out,
   return GIT_PASSTHROUGH;
 }
 
+static std::string userNameFromURL(std::string& url);
+static std::list<std::pair<fs::path,fs::path>>& getListSSHKeys() {
+ fs::path sshDir { ::getenv("HOME") };
+ sshDir /= ".ssh";
+
+ std::list<std::pair<fs::path,fs::path>> *keys =
+   new std::list<std::pair<fs::path,fs::path>>();
+
+  for (auto const& dir_entry : fs::directory_iterator { sshDir }) {
+    if (dir_entry.path().extension() == ".pub") {
+      fs::path privKey { dir_entry.path() };
+      privKey.replace_extension("");
+      std::pair<fs::path, fs::path> p { privKey, dir_entry.path() };
+      keys->push_back(p);
+    }
+  }
+
+  return *keys;
+}
+
 static int
 credAcquireCb(::git_credential **out,
               const char *url,
               const char *userNameURL,
               unsigned int allowed_types,
               void *payload) {
-  std::string userName { userNameURL } ;
+  std::string sURL { url };
+  std::string sUserName { userNameURL ? userNameURL : "" };
+  std::string userName { userNameURL ? sUserName : userNameFromURL(sURL) } ;
   std::string passWord { "" };
   unsigned int credentialTypes[] = { GIT_CREDENTIAL_SSH_KEY,
                                      GIT_CREDENTIAL_USERPASS_PLAINTEXT,
                                      GIT_CREDENTIAL_USERNAME };
-  static int nextTypeToTry = -1;
-
-  int status = GIT_ERROR;
+  int nextTypeToTry = -1;
 
   nextTypeToTry++;
   std::cout << "Trying to get a credential"
@@ -440,51 +489,76 @@ credAcquireCb(::git_credential **out,
             << " sizeof(credentialTypes) "
             << (sizeof(credentialTypes) / sizeof(unsigned int))
             << " currentType: " << credentialTypes[nextTypeToTry]
+            << " userName: " << userName
+            << " allowedTypes: " << allowed_types
             << std::endl;
-  if (nextTypeToTry < sizeof(credentialTypes) / sizeof(int)) {
+
+  int status = GIT_ERROR;
+  // if (nextTypeToTry < sizeof(credentialTypes) / sizeof(int)) {
+  while (nextTypeToTry < sizeof(credentialTypes) / sizeof(int)) {
     switch (credentialTypes[nextTypeToTry]) {
     case GIT_CREDENTIAL_SSH_KEY:
       if (allowed_types & credentialTypes[nextTypeToTry]) {
-        fs::path privKey { "/home/juancardona/.ssh/id_ed25519" };
-        fs::path pubKey  { privKey };
-        pubKey.replace_extension(".pub");
 
-        std::cout << "Url: " << url << std::endl
-                  << "Username: " << userName << std::endl
-                  << "Private Key: " << privKey << std::endl
-                  << "Public Key: " << pubKey << std::endl
-                  << "Password: " << passWord << std::endl;
-        status = ::git_credential_ssh_key_new(out,
-                                              userName.c_str(),
-                                              pubKey.c_str(),
-                                              privKey.c_str(),
-                                              passWord.c_str());
+        std::list<std::pair<fs::path,fs::path>> keys = getListSSHKeys();
+
+        for (auto p : keys) {
+          std::cout << "Url: " << url << std::endl
+                    << "Username: " << userName << std::endl
+                    << "Private Key: " << p.first << std::endl
+                    << "Public Key: " << p.second << std::endl;
+
+          std::cout << "Enter password for : " << p.first.filename();
+          std::cout.flush();
+          setStdinEcho(false);
+          std::cin >> passWord;
+          setStdinEcho(true);
+          status = ::git_credential_ssh_key_new(out,
+                                                userName.c_str(),
+                                                p.first.c_str(),
+                                                p.second.c_str(),
+                                                passWord.c_str());
+          if (status == GIT_OK) return status;
+          passWord.clear();
+        }
       }
       break;
     case GIT_CREDENTIAL_USERPASS_PLAINTEXT:
-      if (allowed_types & credentialTypes[nextTypeToTry]) {
-        std::cout << "Password: ";
-        std::cout.flush();
-        std::cin >> passWord;
-        status = ::git_credential_userpass_plaintext_new(out,
-                                                         userName.c_str(),
-                                                         passWord.c_str());
-      }
+      if (allowed_types & credentialTypes[nextTypeToTry])
+        for (int retries = 0; retries < MAX_RETRIES; retries++) {
+
+          std::cout << "Enter user (" <<  userName
+                    << ") password at repository: ";
+          std::cout.flush();
+          setStdinEcho(false);
+          std::cin >> passWord;
+          setStdinEcho(true);
+          status = ::git_credential_userpass_plaintext_new(out,
+                                                           userName.c_str(),
+                                                           passWord.c_str());
+          if (status == GIT_OK) return status;
+        }
       break;
     case GIT_CREDENTIAL_USERNAME:
       if (allowed_types & GIT_CREDENTIAL_USERNAME) {
+        std::cout << "Credential USERNAME: " << userName
+                  << std::endl;
         status = ::git_credential_username_new(out,
                                                userName.c_str());
+        if (status == GIT_OK) return status;
       }
       break;
     default:
       status = GIT_ERROR;
       break;
     }
+    if (status == GIT_OK) break;
+    nextTypeToTry++;
   }
-  else {
-    status = GIT_ERROR;
-  }
+
+  // else {
+  //   status = GIT_ERROR;
+  // }
 
   std::cout << "Status: " << status << std::endl;
 
@@ -496,23 +570,23 @@ cloneGitRepo(fs::path& location,
              std::string& url,
              RepoDesc* rd,
              Options& options) {
+
   ProgressData pd = { {0} };
-  // ::git_repository *clonedRepo = nullptr;
   ::git_clone_options cloneOpts = GIT_CLONE_OPTIONS_INIT;
   ::git_checkout_options checkoutOpts = GIT_CHECKOUT_OPTIONS_INIT;
   int error;
 
   checkoutOpts.checkout_strategy = GIT_CHECKOUT_SAFE;
-  checkoutOpts.progress_cb = checkoutProgress;
+  // checkoutOpts.progress_cb = checkoutProgress;
   checkoutOpts.progress_payload = &pd;
   cloneOpts.checkout_opts = checkoutOpts;
-  cloneOpts.fetch_opts.callbacks.sideband_progress = sidebandProgress;
-  cloneOpts.fetch_opts.callbacks.transfer_progress = &fetchProgress;
+  // cloneOpts.fetch_opts.callbacks.sideband_progress = sidebandProgress;
+  // cloneOpts.fetch_opts.callbacks.transfer_progress = fetchProgress;
   cloneOpts.fetch_opts.callbacks.credentials = credAcquireCb;
   cloneOpts.fetch_opts.callbacks.payload = &pd;
 
   std::cout << "Cloning: " << url << " at " << location << std::endl;
-  error = git_clone(&rd->repo, url.c_str(), location.c_str(), nullptr);
+  error = ::git_clone(&rd->repo, url.c_str(), location.c_str(), &cloneOpts); // nullptr);
   // &cloneOpts);
   std::cout << std::endl;
 
@@ -542,10 +616,13 @@ cloneGitRepo(fs::path& location,
 static
 char* getRefSpec(const char* refSpec, bool force) {
   size_t size = ::strlen(refSpec);
-  char* ref_spec = new char[size * (force ? 1 : 2) + 1 + (force ? 0 : 2)];
+  size_t realSize = size * (!force ? 1 : 2) + 1 + (!force ? 0 : 2);
+  char* ref_spec = new char[realSize];
+  ::bzero(ref_spec, realSize);
   if (force) ::strcpy(ref_spec, "+");
-  ::strcpy(ref_spec, refSpec);
-  if (force) ::strcpy(::strcpy(ref_spec, ":"), refSpec);
+  else ::strcpy(ref_spec, "");
+  ::strcat(ref_spec, refSpec);
+  if (force) ::strcat(::strcat(ref_spec, ":"), refSpec);
   return ref_spec;
 }
 
@@ -554,26 +631,26 @@ pushGitRepo(::git_repository* repo,
             Options& options,
             const char* refSpec,
             bool force) {
-  ::git_push_options d_git_push_options;
+
+  ProgressData pd = { {0} };
   ::git_remote* remote = nullptr;
-  // const char* refSpec = "refs/heads/main";
-  // char* ref_spec = new char[::strlen(refSpec) + 1];
-  // ::strcpy(ref_spec, refSpec);
   char* ref_spec = getRefSpec(refSpec, force);
   const git_strarray refspecs = {
     &ref_spec,
     1
   };
-  ProgressData pd = { {0} };
 
   m_giterror(::git_remote_lookup(&remote, repo, "origin"),
              "Unable to lookup remote", options);
+
+
+  ::git_push_options d_git_push_options;
   m_giterror(::git_push_options_init(&d_git_push_options,
                                      GIT_PUSH_OPTIONS_VERSION),
              "Error initializing push", options);
 
   d_git_push_options.callbacks.sideband_progress = sidebandProgress;
-  d_git_push_options.callbacks.transfer_progress = &fetchProgress;
+  d_git_push_options.callbacks.transfer_progress = fetchProgress;
   d_git_push_options.callbacks.credentials = credAcquireCb;
   d_git_push_options.callbacks.payload = &pd;
 
@@ -582,12 +659,29 @@ pushGitRepo(::git_repository* repo,
                            &d_git_push_options);
 }
 
+static std::string
+userNameFromURL(std::string& url) {
+  std::regex line_regex { HTTP_REGEX };
+  std::smatch repoInfo;
+
+  if (std::regex_match(url, repoInfo, line_regex))
+      return repoInfo[3];
+
+  line_regex = GIT_REGEX;
+
+  if (std::regex_match(url, repoInfo, line_regex))
+    return repoInfo[3];
+
+  std::string ret { ::getenv(USER_ENV) };
+
+  return ret;
+}
 
 RepoDesc*
 url2RepoDesc(std::string& url) {
   RepoDesc *retValue = nullptr;
 
-  std::regex line_regex { "(https)://(.*)/(.*)/(.*)\\.git" };
+  std::regex line_regex { HTTP_REGEX };
   std::smatch repoInfo;
 
   if (std::regex_match(url,repoInfo,line_regex)) {
@@ -597,7 +691,7 @@ url2RepoDesc(std::string& url) {
                             repoInfo[4]);
   }
   else {
-    line_regex = "(git)://(.*)/~(.*)/(.*)\\.git";
+    line_regex = GIT_REGEX; // "(git)@(.*):(.*)/(.*)\\.git";
     if (std::regex_match(url, repoInfo, line_regex)) {
       retValue = new RepoDesc(repoInfo[1],
                               repoInfo[2],
@@ -992,8 +1086,6 @@ diffDirAction(::git_repository* repo,
     addPath2GitRepo(repo, dRelPath, options);
   }
 
-  // TODO Important Check the semantic of this operation, I guess it is
-  // wrong.
   // Which files exists on dst but doesn't exists on src
   setDifference(dirAndFiles[DSTFILES], dirAndFiles[SRCFILES], workSet);
   for (std::set<fs::path>::iterator it = workSet.begin();
@@ -1061,11 +1153,17 @@ getFirstCommitOid(::git_repository* repo, Options& options) {
              "Couldn't create revision walker",
              options);
 
-  m_giterror(::git_revwalk_push_head(walker),
-             "Couldn't find revision HEAD",
-             options);
-
   ::git_commit* firstCommit = nullptr;
+
+  // TODO This is dangerous, because I'm assuming that
+  // This error is valid when the repository is empty
+  // m_giterror(::git_revwalk_push_head(walker),
+  //            "Couldn't find revision HEAD",
+  //            options);
+  int error = ::git_revwalk_push_head(walker);
+
+  if (error < GIT_OK) return firstCommit;
+  
   ::git_commit *commit = nullptr;
 
   for (; !::git_revwalk_next(&oid, walker); ::git_commit_free(commit)) {
@@ -1086,6 +1184,7 @@ getFirstCommitOid(::git_repository* repo, Options& options) {
 void
 commitAmendGitRepo(::git_repository* repo,
                    std::string& message,
+                   ::git_commit *firstCommit,
                    Options& options) {
   ::git_config *config_default;
 
@@ -1094,11 +1193,13 @@ commitAmendGitRepo(::git_repository* repo,
              options);
 
   ::git_config_entry *entry;
+
   m_giterror(::git_config_get_entry(&entry,
                                     config_default,
                                     "user.name"),
              "Cannot find user name at default config",
              options);
+
   std::string userName { entry->value };
   ::git_config_entry_free(entry);
 
@@ -1106,6 +1207,7 @@ commitAmendGitRepo(::git_repository* repo,
                                     config_default,"user.email"),
              "Cannot find user email at default config",
              options);
+
   std::string userEmail { entry->value };
   ::git_config_entry_free(entry);
 
@@ -1116,58 +1218,61 @@ commitAmendGitRepo(::git_repository* repo,
                                  userEmail.c_str()),
              "Cannot create user signature",
              options);
+
   ::git_index *index;
-  ::git_tree* tree = nullptr;
-  ::git_oid tree_oid;
-  ::git_reference* ref = nullptr;
-  ::git_object* parent = nullptr;
 
-  int error;
-  if ((error = ::git_revparse_ext(&parent,
-                                  &ref,
-                                  repo,
-                                  "HEAD")) != GIT_ENOTFOUND) {
+  // int error;
+  // if ((error = ::git_revparse_ext(&parent,
+  //                                 &ref,
+  //                                 repo,
+  //                                 "HEAD")) != GIT_ENOTFOUND) {
 
-    m_giterror(error,
-               "Error getting parent and reference",
-               options);
-  }
+  //   m_giterror(error,
+  //              "Error getting parent and reference",
+  //              options);
+  // }
 
   m_giterror(::git_repository_index(&index,
                                     repo),
              "Could not open repository index",
              options);
 
+  ::git_oid tree_oid;
+
   m_giterror(::git_index_write_tree(&tree_oid,
                                     index),
              "Could not write tree",
              options);
+
   m_giterror(::git_index_write(index),
              "Could not write index",
              options);
+
+  ::git_tree* tree = nullptr;
+
   ::git_tree_lookup(&tree,
                     repo,
                     &tree_oid);
 
+  // ::git_reference* ref = nullptr;
+  // ::git_object* parent = nullptr;
   ::git_oid new_commit_id;
 
-  m_giterror(::git_commit_create_v(&new_commit_id,
-                                   repo,
-                                   "HEAD",
-                                   signature,
-                                   signature,
-                                   "UTF-8",
-                                   message.c_str(),
-                                   tree,
-                                   parent ? 1 : 0,
-                                   parent),
-             "Error creating commit",
+  m_giterror(::git_commit_amend(&new_commit_id,
+                                firstCommit,
+                                "HEAD",
+                                signature,
+                                signature,
+                                "UTF-8",
+                                message.c_str(),
+                                tree),
+             "Couldn't amend last commit",
              options);
 
   ::git_index_free(index);
   ::git_tree_free(tree);
-  ::git_object_free(parent);
-  ::git_reference_free(ref);
+  // ::git_object_free(parent);
+  // ::git_reference_free(ref);
 }
 
 ::git_repository*
@@ -1190,4 +1295,19 @@ initLocalRepository(fs::path& repoPath,
              options);
 
   return repo;
+}
+
+void
+resetUntilFirstCommit(::git_repository *repo,
+                           ::git_commit *firstCommit,
+                           Options& options) {
+  ::git_checkout_options gco = GIT_CHECKOUT_OPTIONS_INIT;
+
+  m_giterror(::git_reset(repo,
+                         // static_cast<git_object*>(firstCommit),
+                         (git_object*) firstCommit,
+                         GIT_RESET_HARD,
+                         &gco),
+             "Hard Rest failed",
+             options);
 }

@@ -11,14 +11,15 @@
 #include "md2cs_config.h"
 #include "helper.h"
 
-const char* READMEFILENAME   = "README.md";
-const char* STORYFILENAME    = "story.md";
-const char* DOTSTORYFILENAME = ".story.md";
-const char* TARGETDIR        = "target";
-const char* REPOSITORIESDIR  = "repositories";
-const char* REPOSITORYDIR    = "repository";
-const char* DEFAULTBRANCH    = "main";
-const char* STARTXMLCOMMENT  = "<!--";
+const std::string ORIGIN     { "ORIGIN" };
+const char* READMEFILENAME   { "README.md" };
+const char* STORYFILENAME    { "story.md" };
+const char* DOTSTORYFILENAME { ".story.md" };
+const char* TARGETDIR        { "target" };
+const char* REPOSITORIESDIR  { "repositories" };
+const char* REPOSITORYDIR    { "repository" };
+const char* DEFAULTBRANCH    { "main" };
+const char* STARTXMLCOMMENT  { "<!--" };
 
 inline const char* getOutputFilename(bool);
 
@@ -156,26 +157,17 @@ processStoryFile(Options &options) {
   error_msg += targetRepoPath;
   error_msg += " cannot be initialize";
 
-  // // TODO UPDATE: This must be changed 
-  // m_giterror(::git_repository_init(&repo,
-  //                                  targetRepoPath.c_str(),
-  //                                  false),
-  //            error_msg.c_str(),
-  //            options);
+  ::git_repository *repo = nullptr;
 
-  // ::git_index *idx = nullptr;
-  // m_giterror(::git_repository_index(&idx, repo),
-  //            "Repo Index cannot be obtained",
-  //            options);
-  ::git_repository *repo = initLocalRepository(targetRepoPath, options);
-  
   std::ifstream input(storyFile);
 
   if (!input) {
     std::cerr << "Cannot open: "
               << storyFile
               << std::endl;
+
     if (!options.debug) fs::remove_all(options.targetPath);
+
     return;
   }
 
@@ -196,6 +188,8 @@ processStoryFile(Options &options) {
   int commitDone = 0;
   std::ostringstream* pBuffer = new std::ostringstream();
   bool firstPage = true;
+  bool isFirstCommit = true;
+  ::git_commit* firstCommit = nullptr;
 
   while (std::getline(input,line)) {
     const std::regex line_regex("^(-|=){3}(-|=)* *$");
@@ -206,11 +200,14 @@ processStoryFile(Options &options) {
         if (pBuffer)
           (*pBuffer) << transTex2HTMLEntity(line) << std::endl;
         if (!currCheckoutName.empty()) {
+
           std::cout << (currCheckoutType == BRANCH ? "Branch" : "Tag")
                     << " to checkout: " << currCheckoutName
                     << " from repo " << currExtRepo << std::endl;
+
           fs::path curDir { fs::current_path() };
           fs::current_path(extRepos[currExtRepo]->repoDir);
+
           m_giterror(checkoutGitRepoFromName(extRepos[currExtRepo]->repo,
                                              currCheckoutName,
                                              options),
@@ -218,10 +215,12 @@ processStoryFile(Options &options) {
                      options);
 
           fs::current_path(curDir);
+
           diffDirAction(repo,
                         extRepos[currExtRepo]->repoDir,
                         curDir,
                         options, true);
+
           currCheckoutName.clear();
         }
         break;
@@ -245,9 +244,20 @@ processStoryFile(Options &options) {
             }
             else {
               commitDone++;
-              commitGitRepo(repo,
-                            message,
-                            options);
+
+              if (firstCommit && isFirstCommit && options.upload) {
+                commitAmendGitRepo(repo,
+                                   message,
+                                   firstCommit,
+                                   options);
+              }
+              else {
+                commitGitRepo(repo,
+                              message,
+                              options);
+              }
+
+              isFirstCommit = false;
             }
 
             if (pagesProcessed == options.pagesProcessed) {
@@ -265,11 +275,11 @@ processStoryFile(Options &options) {
       switch (state) {
       case INCONFIG:
         {
-
           const std::regex cfg_regex("(^.*): +(.*)");
           std::smatch cfg;
 
           if (std::regex_match(line, cfg, cfg_regex)) {
+
             if (cfg[1] == "repository") {
               std::string currURLExtRepo;
               currURLExtRepo = cfg[2];
@@ -303,30 +313,77 @@ processStoryFile(Options &options) {
                          options);
               fs::current_path(curDir);
             }
+
             if (cfg[1] == "branch") {
               currCheckoutType = BRANCH;
               currCheckoutName.clear();
               currCheckoutName = cfg[2];
             }
+
             if (cfg[1] == "tag") {
               currCheckoutType = TAG;
               currCheckoutName.clear();
               currCheckoutName = cfg[2];
             }
+
             if (cfg[1] == "focus") {
               if (pBuffer)
                 (*pBuffer) << transTex2HTMLEntity(line) << std::endl;
             }
+
             if (cfg[1] == "origin") {
               ::git_remote *remote = nullptr;
               std::string url { cfg[2] };
-              m_giterror(::git_remote_create(&remote,
-                                             repo,
-                                             "origin",
-                                             url.c_str()),
-                         "Creating remote entry",
-                         options);;
 
+              if (options.upload) {
+                RepoDesc *rd = url2RepoDesc(url);
+
+                if (!rd) {
+                  std::cerr << "Fatal error: "
+                            << "cannot create an Repository Description "
+                            << "for \"origin\" "
+                            << "url: "
+                            << url
+                            << std::endl;
+
+                  ::exit(EXIT_FAILURE);
+                }
+
+                std::cout << "protocol: " << rd->protocol
+                          << " host: " << rd->host
+                          << " user: " << rd->user
+                          << " repoName: " << rd->repoName
+                          << std::endl;
+
+                rd->repoDir = targetRepoPath;
+                rd->checkoutName = DEFAULTBRANCH;
+
+                m_giterror(cloneGitRepo(targetRepoPath,
+                                        url,
+                                        rd,
+                                        options),
+                           "Creating local repository of \"origin\"",
+                           options);
+
+                repo = rd->repo;
+                extRepos[ORIGIN] = rd;
+
+                firstCommit = getFirstCommitOid(repo,
+                                                options);
+
+                if (firstCommit) {
+                  resetUntilFirstCommit(repo, firstCommit, options);
+                }
+              }
+              else {
+                repo = initLocalRepository(targetRepoPath, options);
+                m_giterror(::git_remote_create(&remote,
+                                               repo,
+                                               "origin",
+                                               url.c_str()),
+                           "Creating remote entry",
+                           options);
+              }
             }
           }
         }
@@ -361,13 +418,27 @@ processStoryFile(Options &options) {
   }
   else {
     commitDone++;
-    commitGitRepo(repo,
-                  message,
-                  options);
+    if (isFirstCommit && options.upload) {
+      commitAmendGitRepo(repo,
+                         message,
+                         firstCommit,
+                         options);
+    }
+    else {
+      commitGitRepo(repo,
+                    message,
+                    options);
+    }
+
+    isFirstCommit = false;
   }
 
   if (options.upload) {
-    m_giterror(pushGitRepo(repo, options, "refs/heads/main"),
+    std::cout << "Final Check" << std::endl;
+    m_giterror(pushGitRepo(repo,
+                           options,
+                           "refs/heads/main",
+                           firstCommit ? true : false),
                "Error pushing", options);
   }
 

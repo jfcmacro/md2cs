@@ -101,3 +101,12 @@ void stopProcessing(int pagesProcessed,
                     Options& options);
 ::git_repository* initLocalRepository(fs::path& repoPath,
                                       Options& options);
+::git_commit* getFirstCommitOid(::git_repository* repo,
+                                Options& options);
+void resetUntilFirstCommit(::git_repository *repo,
+                           ::git_commit *firstCommit,
+                           Options& options);
+void commitAmendGitRepo(::git_repository* repo,
+                        std::string& message,
+                        ::git_commit *firstCommit,
+                        Options& options);

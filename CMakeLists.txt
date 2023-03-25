@@ -1,12 +1,14 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(md2cs
-  VERSION 0.2
+  VERSION 0.3
   DESCRIPTION "Transform a markdown script into a Coding Stories"
   LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_CXX_FLAGS_DEBUG_INIT "-Wall")
+set(CMAKE_CXX_FLAGS_RELEASE_INIT "-Wall")
 
 add_subdirectory(include)
 add_subdirectory(src)
