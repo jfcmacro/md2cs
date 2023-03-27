@@ -17,3 +17,5 @@ target_include_directories(md2cs PUBLIC
   "${PROJECT_BINARY_DIR}/include"
   "${PROJECT_SOURCE_DIR}/include"
   )
+
+install(TARGETS md2cs DESTINATION bin)
