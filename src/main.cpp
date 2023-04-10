@@ -419,7 +419,7 @@ processStoryFile(Options &options) {
   }
   else {
     commitDone++;
-    if (isFirstCommit && options.upload) {
+    if (firstCommit && isFirstCommit && options.upload) {
       commitAmendGitRepo(repo,
                          message,
                          firstCommit,

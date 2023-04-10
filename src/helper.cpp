@@ -1163,7 +1163,7 @@ getFirstCommitOid(::git_repository* repo, Options& options) {
   int error = ::git_revwalk_push_head(walker);
 
   if (error < GIT_OK) return firstCommit;
-  
+
   ::git_commit *commit = nullptr;
 
   for (; !::git_revwalk_next(&oid, walker); ::git_commit_free(commit)) {
