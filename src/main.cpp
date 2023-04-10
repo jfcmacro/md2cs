@@ -42,7 +42,8 @@ static void usage(const char* progname,
             << " -h | --help"
             << std::endl;
   std::cerr << progname
-            << " [-d] [[-p] <number-pages-process>|[--number-pages-process] <numbe-pages-process>] [-u]"
+            << " [-d] [[-n] <number-pages-process>|[--number-pages-process]"
+            << " <number-pages-process>] [-u]"
             << std::endl;
   ::exit(status);
 }
