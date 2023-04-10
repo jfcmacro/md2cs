@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(md2cs
-  VERSION 0.4.1
+  VERSION 0.5
   DESCRIPTION "Transform a markdown script into a Coding Stories"
   LANGUAGES CXX)
 
